@@ -99,6 +99,8 @@ A failed request has a 4xx or 5xx status and this body:
 | `first_contact` | 409 | a send to a chat with no kept activity, without `first_contact` ([sending.md](sending.md)) |
 | `rate_limited` | 429 | a send limit was hit; `retry_after_seconds` says when |
 | `duplicate_text` | 429 | the same text to too many chats ([sending.md](sending.md)) |
+| `outcome_unknown` | 504 | a send whose result the daemon could not determine; the message may have gone out ([sending.md](sending.md)) |
+| `confirm_required` | 409 | a settings change that loosens a safeguard, sent without `confirm: true` ([cli.md](cli.md)) |
 | `not_downloadable` | 422 | the message has no media, is view-once, or its media has expired |
 | `whatsapp_error` | 502 | WhatsApp refused or failed the operation; `message` carries a cleaned-up reason |
 | `internal` | 500 | a bug. The body carries no file paths and no content |

@@ -101,11 +101,18 @@ Reports, per account, with a fix command for anything wrong:
 
 | Command | Does |
 | --- | --- |
-| `chats` | chats with kept content: id, name, type, effective scope. `--fields` adds last kept time and discard count |
+| `chats [--limit N]` | chats with kept content: id, name, type, effective scope. `--fields` adds last kept time and discard count |
 | `groups` | every group the account is a member of, kept content or not: id, name, effective scope, member count. Needs a live connection |
 | `chat view <chat>` | one chat, with participants marked `me`, `operator`, `contact` |
 | `events [--after <seq>] [--limit N] [--chat <chat>] [--kind <kind>] [--follow] [--mark-read]` | events after a point. `--mark-read` sends read receipts for the incoming messages returned. The last line of output states the highest `seq` returned, for the next call |
 | `read <chat> [--limit N] [--before <id>] [--mark-read]` | kept messages of a chat, oldest first |
+
+Every list states its size against the whole: `count: N of M`, and when N is less than M a
+`help` line with the flag that shows more. `chats`, `groups`, `read` and `events` all take
+`--limit` and all say when the limit cut the list. A list is never silently partial.
+
+| Command | Does |
+| --- | --- |
 | `message view <ref>` | one kept message in full, with its reply context and media descriptor |
 
 `events` without `--after` returns the most recent events up to the limit, and says so.
@@ -129,24 +136,43 @@ Reports, per account, with a fix command for anything wrong:
 | `scope show` | account scope, `dm_from`, and every per-chat override |
 | `scope set <scope>` (`full`, `tagged` or `dm-only`) | sets the account scope. Setting `full` needs `--confirm` |
 | `scope set --chat <chat> <scope>` (`full`, `tagged`, `none` or `default`) | sets or clears a chat's override. Setting `full` needs `--confirm` |
-| `scope dm-from <who>` (`operators` or `anyone`) | sets whose direct messages are kept |
+| `scope dm-from <who>` (`operators` or `anyone`) | sets whose direct messages are kept. Setting `anyone` needs `--confirm` |
 | `operators list`, `operators add <user>`, `operators remove <user>` | manage operators |
 | `settings show` | all settings |
-| `settings set <key> <value>` | sets `wake_file`, `retain_days`, `presence`, `read_receipts` or a `send.*` limit |
+| `settings set <key> <value>` | sets `wake_file`, `retain_days`, `presence`, `read_receipts` or a `send.*` limit. Loosening a send safeguard needs `--confirm`: `send.first_contact allow`, or raising `send.per_hour`, `send.per_minute`, `send.same_text_chats` or `send.max_file_mb` above its current value |
+
+**What needs `--confirm`, and what does not.** A change that widens what the account reads or
+loosens a safeguard needs `--confirm`: scope `full`, `dm-from anyone`, the send settings above,
+and the destructive commands. The daemon enforces it too (`confirm_required`), so no caller can
+skip it. Tightening never needs it. `send`, `send-file`, `react`, `typing` and `mark-read` do
+not take `--confirm`: they are what the tool is for, a bot runs them unattended, and the
+daemon's first-contact refusal and rate limits are their guard. `operators add` does not
+either: an operator can be heard, and can do nothing through this tool.
 
 Mutations are idempotent: setting a value it already has, adding an operator already present, or
 reacting with the same emoji again succeeds as a no-op and says so.
 
 ## Agent integrations
 
-- `hook install`, `hook uninstall` and `hook status` manage a session-start hook for supported agent harnesses.
-  The hook prints a short home view, nothing from any message. Accounts belong to a user, not a
-  directory, so the hook is scoped by configuration: a project lists the accounts it uses in a
-  `.whatsapp-axi.json` file at its root, and the hook prints only those. In a directory with no
-  such file the hook prints nothing.
-- The repository ships an installable skill generated from the CLI's own command reference.
-
-Both are built after the core commands and are not needed for the pilot.
+- **`hook install`, `hook uninstall`, `hook status`** manage a session-start hook for Claude
+  Code, Codex and OpenCode, at project scope by default and user scope with `--global`.
+  Installing is explicit and idempotent, and repairs a hook whose executable path has moved.
+- **The hook is scoped to the project.** Accounts belong to a user, not a directory, so a
+  project names the accounts it uses in `.whatsapp-axi.json` at its root
+  (`{"accounts": ["example"]}`). The hook prints those accounts and nothing else, and in a
+  directory with no such file, at any scope, it prints nothing at all.
+- **What it prints** is one row per listed account: name, state, scope, and the count of kept
+  events since the hook last ran in that project. Never message text, a sender, a chat name or
+  a phone number.
+- **It can never hang or fail a session.** Each account is asked with a two-second limit, and
+  an account that does not answer in time, or errors, is its own row saying so. The hook
+  always exits 0.
+- **The home view and `accounts` degrade the same way:** one row per account, a short limit
+  each, and a daemon that hangs or errors is a row with that state, never a failed command. Their
+  hint for an account that is not running names `daemon start` when it is installed as a
+  service and `daemon install` or `daemon run` when it is not.
+- **An installable skill** ships in the repository, generated from the CLI's own command
+  reference and checked in CI for staleness. It carries no live state.
 
 ## Tests
 

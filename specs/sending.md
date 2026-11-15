@@ -12,6 +12,17 @@ Everything an account sends goes through its daemon, one message at a time.
 - The response carries the message id, the chat id as WhatsApp addressed it, and the server time.
 - Sends for one account run strictly one after another.
 - A failed send is reported, never retried by the daemon.
+- **A send is finished by the daemon, whatever happens to the request.** Once a send has
+  passed the limits and been recorded as pending, the daemon carries it through even if the
+  client disconnects or gives up waiting. The CLI waits for a send, a file or a reaction for as
+  long as the daemon's own send timeout allows, with no shorter limit of its own.
+- **An unknown outcome is said as unknown.** When the client stops waiting before the daemon
+  answers, or the daemon cannot tell whether WhatsApp accepted the message, the error is
+  `outcome_unknown`, never a plain failure, and its help says to check `read <chat>` before
+  sending again: a retry may duplicate a message that went out. The message's row stays
+  `pending` until the daemon learns the outcome.
+- **Accepted means sent.** If WhatsApp accepted the message and only the daemon's own
+  bookkeeping failed afterwards, the answer is success with a `warning`, never an error.
 
 ### Replies
 
