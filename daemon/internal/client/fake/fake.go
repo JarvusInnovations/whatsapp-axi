@@ -65,6 +65,9 @@ type Client struct {
 	MaxInFlight int
 	// BeforeSend, when set, runs inside Send before it returns (to look at the store mid-send).
 	BeforeSend func(client.OutMessage)
+	// SendWait, when set, holds every Send and React until it is closed or the context ends
+	// (then the context's error is returned, as the library does).
+	SendWait chan struct{}
 	// SendErr, when set, fails every Send and React.
 	SendErr error
 	// AddressAs, when set, is the chat id WhatsApp answers with (a phone-number send answered
@@ -397,13 +400,46 @@ func (c *Client) leave() {
 	c.mu.Unlock()
 }
 
-func (c *Client) Send(_ context.Context, m client.OutMessage) (client.SendResult, error) {
+// wait holds a send while SendWait is open.
+func (c *Client) wait(ctx context.Context) error {
+	c.mu.Lock()
+	w := c.SendWait
+	c.mu.Unlock()
+	if w == nil {
+		return nil
+	}
+	select {
+	case <-w:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// SetSendWait sets SendWait under the lock.
+func (c *Client) SetSendWait(w chan struct{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.SendWait = w
+}
+
+// SetSendErr sets SendErr under the lock.
+func (c *Client) SetSendErr(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.SendErr = err
+}
+
+func (c *Client) Send(ctx context.Context, m client.OutMessage) (client.SendResult, error) {
 	if err := c.enter(); err != nil {
 		return client.SendResult{}, err
 	}
 	defer c.leave()
 	if c.BeforeSend != nil {
 		c.BeforeSend(m)
+	}
+	if err := c.wait(ctx); err != nil {
+		return client.SendResult{}, err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -441,11 +477,14 @@ func (c *Client) Sent() []client.OutMessage {
 	return append([]client.OutMessage(nil), c.sent...)
 }
 
-func (c *Client) React(_ context.Context, chat, sender, id, emoji string) (client.SendResult, error) {
+func (c *Client) React(ctx context.Context, chat, sender, id, emoji string) (client.SendResult, error) {
 	if err := c.enter(); err != nil {
 		return client.SendResult{}, err
 	}
 	defer c.leave()
+	if err := c.wait(ctx); err != nil {
+		return client.SendResult{}, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.SendErr != nil {

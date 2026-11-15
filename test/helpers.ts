@@ -145,6 +145,10 @@ export interface Reply {
   lines?: unknown[];
   /** For streams: end the response after the lines (a stream with a final line). */
   end?: boolean;
+  /** Never answer (a daemon that hangs). */
+  hang?: boolean;
+  /** Drop the connection without answering. */
+  drop?: boolean;
 }
 
 export type Route = (req: { method: string; path: string; query: URLSearchParams; body: unknown }) => Reply;
@@ -235,6 +239,11 @@ export class FakeDaemon {
         }
       }
       const reply = fn ? fn({ method: req.method ?? "", path: url.pathname, query: url.searchParams, body }) : apiError(400, "bad_request", "Unknown request.");
+      if (reply.hang) return;
+      if (reply.drop) {
+        req.socket.destroy();
+        return;
+      }
       if (reply.lines) {
         res.writeHead(200, { "Content-Type": "application/x-ndjson" });
         for (const l of reply.lines) res.write(JSON.stringify(l) + "\n");

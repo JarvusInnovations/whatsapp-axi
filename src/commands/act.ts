@@ -26,6 +26,7 @@ function sentOut(d: { account: string }, res: Obj, af: string, extra: Obj = {}):
   expect(d as never, typeof res.id === "string" && typeof res.chat === "string", "send answer is missing fields");
   return {
     sent: { id: res.id, chat: res.chat, t: res.t ?? null, ...extra },
+    ...(typeof res.warning === "string" && res.warning ? { warning: res.warning } : {}),
     help: [`Run \`whatsapp-axi read ${res.chat as string}${af}\` to see the chat`, `Run \`whatsapp-axi events --follow${af}\` to wait for replies`],
   };
 }
@@ -64,7 +65,7 @@ export async function send(ctx: Ctx, args: string[], stdin: () => string = () =>
   if (reply) body.reply_to = reply;
   if (p.flags.mention) body.mentions = p.flags.mention;
   if (p.flags["first-contact"]) body.first_contact = true;
-  const res = await d.call("POST", "/v1/send", body);
+  const res = await d.send("/v1/send", body, chat);
   return sentOut(d, res, acctFlag(ctx, account));
 }
 
@@ -101,7 +102,7 @@ export async function sendFile(ctx: Ctx, args: string[]): Promise<unknown> {
   if (p.flags.as !== undefined) body.as = p.flags.as;
   if (reply) body.reply_to = reply;
   if (p.flags["first-contact"]) body.first_contact = true;
-  const res = await d.call("POST", "/v1/send-file", body);
+  const res = await d.send("/v1/send-file", body, chat);
   const media = (res.media ?? {}) as Obj;
   return sentOut(d, res, acctFlag(ctx, account), { type: media.type ?? null, mime: media.mime ?? null });
 }
@@ -131,11 +132,12 @@ export async function react(ctx: Ctx, args: string[]): Promise<unknown> {
   const d = ctx.daemon(account);
   const body: Obj = { id, emoji: remove ? "" : emojiArg };
   if (chat) body.chat = chat;
-  const res = await d.call("POST", "/v1/react", body);
+  const res = await d.send("/v1/react", body, chat || undefined);
   expect(d, typeof res.changed === "boolean" && typeof res.chat === "string", "react answer is missing fields");
   const target = `${res.chat as string}/${id}`;
-  if (remove) return { reaction: res.changed ? `removed from ${target}` : `none on ${target} (no-op)` };
-  return { reaction: res.changed ? `${emojiArg} on ${target}` : `${emojiArg} already on ${target} (no-op)` };
+  const warning = typeof res.warning === "string" && res.warning ? { warning: res.warning } : {};
+  if (remove) return { reaction: res.changed ? `removed from ${target}` : `none on ${target} (no-op)`, ...warning };
+  return { reaction: res.changed ? `${emojiArg} on ${target}` : `${emojiArg} already on ${target} (no-op)`, ...warning };
 }
 
 // ---- download --------------------------------------------------------------

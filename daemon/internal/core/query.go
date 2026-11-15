@@ -102,6 +102,9 @@ type Status struct {
 	LastPhoneActivity       *string `json:"last_phone_activity"`
 	LastPhoneActivityApprox bool    `json:"last_phone_activity_approximate"`
 	Counts                  Counts  `json:"counts"`
+	// SendTimeoutSeconds is how long the daemon carries one send (SendTimeout); the CLI waits
+	// at least this long for a send, a file or a reaction.
+	SendTimeoutSeconds int `json:"send_timeout_seconds"`
 }
 
 // Counts are the store totals in a status.
@@ -116,6 +119,7 @@ func (a *Account) Status(ctx context.Context) (*Status, error) {
 	st, reason, since := a.State()
 	s := &Status{
 		Protocol:                Protocol,
+		SendTimeoutSeconds:      int(SendTimeout / time.Second),
 		Account:                 a.layout.Account,
 		State:                   st,
 		Since:                   rfc3339(since),
