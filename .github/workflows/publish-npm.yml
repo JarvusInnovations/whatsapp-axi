@@ -1,0 +1,149 @@
+name: Publish npm packages
+
+# On the GitHub release that release-publish.yml creates: set the version from the tag, run the CI
+# gate at the tag, then publish the four platform packages and, last, the main package, with npm
+# trusted publishing (OIDC, no token) and provenance. The trusted-publisher setting of each of the
+# five packages names this file, publish-npm.yml: renaming it stops publishing until all five are
+# reconfigured. The first publish of each package is manual (docs/releasing.md).
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve the release version
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if ! echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$'; then
+            echo "::error::release tag $GITHUB_REF_NAME is not vX.Y.Z or vX.Y.Z-rc.N"
+            exit 1
+          fi
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .tool-versions
+          package-manager-cache: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: daemon/go.sum
+
+      - name: Set package.json version from tag
+        run: npm version --no-git-tag-version --allow-same-version "$RELEASE_VERSION"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Scrub gate
+        run: bun run check:scrub
+
+      - name: Lint, format, type check, build
+        run: bun run lint && bun run format:check && bun run typecheck && bun run build
+
+      - name: The skill is current with the command reference
+        run: bun run docs:check
+
+      - name: The built CLI reports the release version
+        run: test "$(node dist/bin/whatsapp-axi.js --version)" = "$RELEASE_VERSION"
+
+      - name: Licence gate
+        run: bun run check:licenses
+
+      - name: Daemon tests
+        working-directory: daemon
+        env:
+          CGO_ENABLED: "0"
+        run: go vet ./... && go test ./...
+
+      - name: CLI tests (with the daemon for the end-to-end test)
+        run: bun run build:daemon && bun run test
+
+  publish-npm:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) and provenance
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # Node 24 ships npm 11, which supports trusted publishing without the broken
+          # `npm install -g npm@...` self-upgrade on Node 22 runners.
+          node-version: "24.x"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: daemon/go.sum
+
+      - name: Set package.json version from tag
+        run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the CLI
+        run: bun run build
+
+      # Cross-compiles the four daemons, writes each platform package's NOTICES (the licence gate
+      # runs again here), assembles the five packages in release/ and refuses an incomplete set.
+      - name: Assemble and verify the five packages
+        run: bun run build:packages
+
+      - name: Publish the platform packages, then the main package
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          tag=latest
+          case "$GITHUB_REF_NAME" in *-rc.*) tag=next ;; esac
+          on_registry() { [ "$(npm view "$1@$version" version 2>/dev/null || true)" = "$version" ]; }
+          publish() {
+            if on_registry "$1"; then
+              echo "::warning::$1@$version is already on the registry (a manual first publish?); not publishing it"
+            else
+              npm publish "./release/$1" --provenance --access public --tag "$tag"
+            fi
+          }
+
+          platforms=$(node -p 'Object.keys(require("./release/whatsapp-axi/package.json").optionalDependencies).join(" ")')
+          if [ -z "$platforms" ]; then echo "::error::the main package lists no platform packages"; exit 1; fi
+          for p in $platforms; do
+            if [ ! -f "release/$p/package.json" ]; then echo "::error::platform package $p is missing from release/"; exit 1; fi
+          done
+          for p in $platforms; do publish "$p"; done
+
+          # The main package must never point at a version that is not there. The registry can take a
+          # moment to show a new version, so wait for each before publishing the main package.
+          for p in $platforms; do
+            for i in $(seq 1 20); do
+              if on_registry "$p"; then break; fi
+              if [ "$i" -eq 20 ]; then
+                echo "::error::$p@$version is not on the registry; the main package was not published"
+                exit 1
+              fi
+              sleep 15
+            done
+          done
+          publish whatsapp-axi
