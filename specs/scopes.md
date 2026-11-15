@@ -72,13 +72,14 @@ In a group under `tagged`, an incoming message is kept if and only if at least o
    mentions the account in the reply: the message they replied to is kept too, so a person can
    bring the account into any message by replying to it with a mention. See "The parent of a
    mention" below.
-3. **It replies to a kept message in the same chat.** The message quotes a message id that is in
-   `store.db` for that chat. That covers:
+3. **It replies to a message kept by rule 1, 3 or 4, in the same chat.** That covers:
    - a reply to a message that mentioned the account
-   - a reply to a parent kept by rule 2, arriving after it was kept
    - a reply to one of the account's own messages
    - a reply to a message kept by this same rule, so a thread that started with a mention or with
      the account's own message stays in view as people keep replying down it
+
+   A reply to a parent kept by rule 2 is **not** covered. The account sees what descends from the
+   message that mentioned it, never the other replies to that message's parent.
 4. **It is the account's own message.**
 
 Everything else in the group is discarded.
@@ -100,8 +101,11 @@ In both cases:
 
 - The parent becomes an ordinary kept message, with `kept_by: parent` and its original time when
   known. Its event is emitted immediately before the event of the reply that brought it in.
-- Replies to it that arrive **afterwards** are kept by rule 3. Replies to it that arrived
-  **before** the mention are not recovered: only the direct parent is.
+- **It does not start a thread.** Other replies to the parent, before or after, are discarded
+  unless they mention the account themselves. Only replies descending from the mentioning reply
+  are kept by rule 3.
+- If a parent kept by rule 2 is later edited to mention the account, it is from then on a message
+  kept by rule 1, and replies to it are kept.
 - A parent that is already kept is left as it is.
 - Only a reply that itself mentions the account pulls its parent in. A reply kept by rule 3 does
   not.
@@ -185,7 +189,8 @@ lookup of kept message ids. It is tested without any WhatsApp connection.
   account's ids; the parent of a mentioning reply kept whole from the buffer and kept `partial`
   from the quoted copy when the buffer does not have it; the parent's event preceding the reply's;
   a non-mentioning reply to a discarded parent staying discarded and not pulling the parent in;
-  reply chains several levels deep, including under a kept parent; an edit that adds a mention; a revoke of a kept message; `dm_from` both ways; each
+  a sibling reply to a parent kept by rule 2 staying discarded, before and after the mention;
+  reply chains several levels deep under the mentioning reply; an edit that adds a mention; a revoke of a kept message; `dm_from` both ways; each
   per-chat override.
 - **Leaves no trace.** A test feeds the daemon a discarded message whose text, caption, quoted
   copy and file name each contain a unique marker, then reads every byte of every file under the
