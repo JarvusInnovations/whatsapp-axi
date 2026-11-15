@@ -17,7 +17,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await fake.close();
-  env.cleanup();
+  await env.cleanup();
 });
 
 const SENT = { id: "3EB0F0000000000001", chat: GROUP, t: "2030-01-05T15:00:00Z" };

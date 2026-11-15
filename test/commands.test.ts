@@ -19,7 +19,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await fake.close();
-  env.cleanup();
+  await env.cleanup();
 });
 
 const MESSAGE = {
@@ -529,7 +529,7 @@ describe("accounts and the home view", () => {
   });
 
   it("says so when there are no accounts", async () => {
-    env.cleanup();
+    await env.cleanup();
     env = makeEnv();
     let r = await run([]);
     expect(r.out).toContain("0 accounts");

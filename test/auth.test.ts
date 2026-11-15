@@ -13,7 +13,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await fake.close();
-  env.cleanup();
+  await env.cleanup();
 });
 
 const ME = { id: "100000000000000@lid", lid: "100000000000000@lid", pn: "+15550100000", name: "", me: true, operator: false };

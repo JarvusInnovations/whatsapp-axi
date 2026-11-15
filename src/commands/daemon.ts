@@ -107,6 +107,43 @@ async function lingerRefusal(s: ServiceManager): Promise<AxiError | undefined> {
   ]);
 }
 
+/** How long install, start and restart wait for the service to be active and the daemon to answer. */
+export const READY = { waitMs: 15_000, pollMs: 250 };
+
+/**
+ * Waits until the unit is active and the daemon answers on its socket. A unit that fails, or does
+ * not get there in time, is exit 1 with its state and the log command (specs/daemon.md).
+ */
+async function waitReady(ctx: Ctx, s: ServiceManager, name: string, verb: string): Promise<UnitState> {
+  const unit = unitName(name);
+  const deadline = Date.now() + READY.waitMs;
+  let st = await s.show(unit);
+  let why = "";
+  for (;;) {
+    if (st.active === "active") {
+      try {
+        await ctx.daemon(name).status();
+        return st;
+      } catch (err) {
+        if (!(err instanceof AxiError)) throw err;
+        why = err.code === "daemon_not_running" ? "the daemon does not answer on its socket" : `the daemon answered ${err.code}: ${err.message}`;
+      }
+    } else if (st.active === "failed") {
+      why = "the service failed";
+      break;
+    } else {
+      why = `the service is ${st.active} (${st.sub})`;
+    }
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, READY.pollMs));
+    st = await s.show(unit);
+  }
+  throw failure(`daemon ${verb} ${name}: ${why}; the service is ${st.active} (${st.sub}).`, "service_not_ready", [
+    `Run \`whatsapp-axi daemon logs ${name}\` to see why`,
+    `Run \`whatsapp-axi daemon status ${name}\` for the service and the daemon together`,
+  ]);
+}
+
 // ---- install ---------------------------------------------------------------
 
 const NAME = { name: "name", required: true, desc: "the account" };
@@ -165,7 +202,7 @@ export async function daemonInstall(ctx: Ctx, args: string[]): Promise<unknown> 
   const wasInstalled = installedAccounts(ctx).includes(name);
   await systemctl(s, ["enable", "--now", unit]);
   if (binaryChanged && before.active === "active") await systemctl(s, ["restart", unit]);
-  const after = await s.show(unit);
+  const after = await waitReady(ctx, s, name, "install");
   const noop = !binaryChanged && !unitChanged && wasInstalled && before.active === "active";
   return {
     installed: noop ? `${name} already installed and running (no-op)` : name,
@@ -230,10 +267,13 @@ export async function daemonControl(ctx: Ctx, args: string[], verb: "start" | "s
   if (!isInstalled(ctx, name)) throw notInstalled(name);
   const unit = unitName(name);
   const before = await s.show(unit);
-  if (verb === "start" && before.active === "active") return { service: `${name} already running (no-op)` };
+  if (verb === "start" && before.active === "active") {
+    await waitReady(ctx, s, name, verb);
+    return { service: `${name} already running (no-op)` };
+  }
   if (verb === "stop" && before.active !== "active" && before.active !== "activating") return { service: `${name} already stopped (no-op)` };
   await systemctl(s, [verb, unit]);
-  const after = await s.show(unit);
+  const after = verb === "stop" ? await s.show(unit) : await waitReady(ctx, s, name, verb);
   return {
     service: `${name} ${after.active} (${after.sub})`,
     ...(verb === "stop" ? {} : { help: [`Run \`whatsapp-axi daemon status ${name}\` to see the daemon's state`] }),
@@ -298,6 +338,11 @@ export async function daemonLogs(ctx: Ctx, args: string[], write: (s: string) =>
   }
   if (follow) return { follow: "stopped" };
   const real = got.filter((l) => !l.startsWith("-- "));
+  // journalctl can exit 0 having read nothing at all (no journal files, no permission). That is
+  // a failure to read the log, never an empty log; only "-- No entries --" is a real empty one.
+  if (real.length === 0 && !got.some((l) => l.startsWith("-- No entries")) && r.stderr.trim()) {
+    throw failure(`journalctl read no log: ${r.stderr.trim().split("\n")[0]}`, "logs_failed", ["Some systems keep no per-user journal; check `journalctl --user` works for this user"]);
+  }
   if (real.length === 0) return { log: `0 lines for ${unit}`, ...(isInstalled(ctx, name) ? {} : { help: [`Run \`whatsapp-axi daemon install ${name}\`; a foreground daemon logs to its terminal`] }) };
   return { unit, log: real.map((line) => ({ line })) };
 }

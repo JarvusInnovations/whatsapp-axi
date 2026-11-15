@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { READY } from "../src/commands/daemon.js";
 import { VERSION } from "../src/version.js";
 import { addAccount, FakeDaemon, makeEnv, run, service, socketPath, STATUS, type Env } from "./helpers.js";
 
@@ -160,16 +161,40 @@ describe("daemon start, stop, restart, status, uninstall", () => {
     expect(r.out).toContain("state: not running");
     expect(r.out).toContain("daemon install example");
     await run(["daemon", "install", "example"]);
-    const fake = new FakeDaemon();
-    await fake.listen(socketPath(env, "example"));
+    r = await run(["daemon", "status", "example"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("installed: true");
+    expect(r.out).toContain("active: active");
+    expect(r.out).toContain("state: connected");
+  });
+
+  it("install, start and restart succeed only when the unit is active and the daemon answers", async () => {
+    const saved = { ...READY };
+    READY.waitMs = 300;
+    READY.pollMs = 20;
     try {
-      r = await run(["daemon", "status", "example"]);
-      expect(r.code, r.out).toBe(0);
-      expect(r.out).toContain("installed: true");
-      expect(r.out).toContain("active: active");
-      expect(r.out).toContain("state: connected");
+      for (const as of ["failed", "activating", "active-silent"] as const) {
+        service.startAs = as;
+        const r = await run(["daemon", "install", "example"]);
+        expect(r.code, `${as}: ${r.out}`).toBe(1);
+        expect(r.out).toContain("code: service_not_ready");
+        expect(r.out).toContain("whatsapp-axi daemon logs example");
+        if (as === "failed") expect(r.out).toContain("failed (failed)");
+        if (as === "activating") expect(r.out).toContain("activating (auto-restart)");
+        if (as === "active-silent") expect(r.out).toContain("does not answer on its socket");
+      }
+      service.startAs = undefined;
+      expect((await run(["daemon", "install", "example"])).code).toBe(0);
+      await run(["daemon", "stop", "example"]);
+      service.startAs = "failed";
+      for (const verb of ["start", "restart"]) {
+        const r = await run(["daemon", verb, "example"]);
+        expect(r.code, `${verb}: ${r.out}`).toBe(1);
+        expect(r.out).toContain("code: service_not_ready");
+      }
     } finally {
-      await fake.close();
+      Object.assign(READY, saved);
+      service.startAs = undefined;
     }
   });
 
@@ -206,6 +231,13 @@ describe("daemon logs", () => {
     r = await run(["daemon", "logs", "example"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("code: logs_failed");
+    // journalctl that exits 0 having read nothing is a failure, not an empty log.
+    service.logLines = [];
+    service.logResult = { code: 0, stdout: "", stderr: "No journal files were opened due to insufficient permissions.\n" };
+    r = await run(["daemon", "logs", "example"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("code: logs_failed");
+    expect(r.out).toContain("insufficient permissions");
     r = await run(["daemon", "logs", "example", "--lines", "0"]);
     expect(r.code).toBe(2);
   });
@@ -220,10 +252,9 @@ describe("daemon upgrade and doctor", () => {
     await run(["daemon", "install", "other"]);
     process.env.WHATSAPP_AXI_DAEMON = src;
 
-    const fake = new FakeDaemon();
+    const fake = service.daemons.get("example")!;
     fake.route("GET /v1/status", () => ({ body: { ...STATUS, daemon_version: "0.0.1" } }));
-    await fake.listen(socketPath(env, "example"));
-    try {
+    {
       let r = await run(["doctor", "--account", "example"]);
       expect(r.out).toContain("example,binary,warn,");
       expect(r.out).toContain("installed binary 0.0.1");
@@ -246,8 +277,6 @@ describe("daemon upgrade and doctor", () => {
 
       r = await run(["daemon", "upgrade"]);
       expect(r.out).toContain("already this CLI's (no-op)");
-    } finally {
-      await fake.close();
     }
   });
 
