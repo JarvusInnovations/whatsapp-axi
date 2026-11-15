@@ -81,10 +81,7 @@ jobs:
           cache-dependency-path: daemon/go.sum
 
       - name: Build the daemon for the end-to-end test
-        working-directory: daemon
-        env:
-          CGO_ENABLED: "0"
-        run: go build -o bin/whatsapp-axid ./cmd/whatsapp-axid
+        run: npm run build:daemon
 
       - name: Test
         run: npm test

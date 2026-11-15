@@ -48,11 +48,15 @@ or abusive. Use a number you can afford to lose, and keep volumes human.
 
 ## Development
 
-Toolchain versions are pinned in `.tool-versions` (asdf).
+Toolchain versions are pinned in `.tool-versions` (asdf). Build the daemon with `npm run build:daemon`,
+not a plain `go build`: the script stamps the version from `package.json`, which the CLI and
+`doctor` compare with their own. An unstamped build reports `0.0.0-dev` and `doctor` warns of a
+version mismatch.
 
 ```sh
 # daemon
-cd daemon && go vet ./... && go test ./... && go build -o bin/whatsapp-axid ./cmd/whatsapp-axid
+cd daemon && go vet ./... && go test ./... && cd ..
+npm run build:daemon   # daemon/bin/whatsapp-axid, stamped with the version in package.json
 
 # CLI
 npm ci && npm run lint && npm run typecheck && npm run build && npm test

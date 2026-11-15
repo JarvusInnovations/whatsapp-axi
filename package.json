@@ -7,7 +7,8 @@
     "lint": "oxlint src bin test",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:daemon": "cd daemon && CGO_ENABLED=0 go build -ldflags \"-X main.version=$npm_package_version\" -o bin/whatsapp-axid ./cmd/whatsapp-axid"
   },
   "repository": {
     "type": "git",
