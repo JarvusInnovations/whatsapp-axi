@@ -52,6 +52,16 @@ function helpForCode(account: string, code: string, body: Json): string[] {
       return [`Run \`whatsapp-axi doctor --account ${account}\` to see the account's state`];
     case "not_linked":
       return [`Run \`whatsapp-axi auth link --phone <number> --account ${account}\` to link the account`];
+    case "first_contact":
+      return ["Nothing has been received from or sent to this chat. Add --first-contact if you mean to message it for the first time"];
+    case "rate_limited": {
+      const s = typeof body.retry_after_seconds === "number" ? body.retry_after_seconds : undefined;
+      return [`Wait${s ? ` ${s} seconds` : ""} and try again; the limits are \`send.per_minute\` and \`send.per_hour\` (\`whatsapp-axi settings show --account ${account}\`)`];
+    }
+    case "duplicate_text":
+      return ["The same text went to too many chats in ten minutes (`send.same_text_chats`); vary the text or wait"];
+    case "not_downloadable":
+      return ["The media cannot be fetched: it is missing, view-once, or expired on WhatsApp's servers"];
     case "link_in_progress":
       return ["Wait for the running link attempt to end (it lasts at most about three minutes)"];
     case "internal":
