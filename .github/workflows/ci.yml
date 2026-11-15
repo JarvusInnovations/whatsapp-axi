@@ -32,11 +32,25 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Build
+      - name: Build (CGO disabled)
+        env:
+          CGO_ENABLED: "0"
         run: go build -o bin/whatsapp-axid ./cmd/whatsapp-axid
+
+      - name: Build for macOS (CGO disabled)
+        env:
+          CGO_ENABLED: "0"
+          GOOS: darwin
+          GOARCH: arm64
+        run: go build -o /dev/null ./cmd/whatsapp-axid
 
       - name: Test
         run: go test -race ./...
+
+      - name: Test (CGO disabled)
+        env:
+          CGO_ENABLED: "0"
+        run: go test ./...
 
   cli:
     name: CLI (TypeScript)

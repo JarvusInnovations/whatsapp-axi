@@ -16,6 +16,17 @@ currently holds the specs, the plans, a build skeleton for both halves and the r
 - Configurable **scopes** that decide what the daemon keeps for an account (for example, only
   messages that mention the account in a group).
 
+**What a scope can and cannot promise.** WhatsApp delivers every message of a group to every
+member's devices, so the daemon receives and decrypts all of them, and a delivery receipt goes back
+for each. A scope decides what happens next: the daemon never writes, logs or returns the text,
+caption, quoted copy, media keys or file name of a message it discards. Two limits remain. The
+WhatsApp library itself stores, in `session.db`, encryption state for each group member who has
+sent a message, the mapping between a person's two ids, their display name and, for some messages,
+a per-message secret keyed by chat, sender and message id; none of that is message content. And in
+a `tagged` group the daemon holds recently discarded messages in memory (at most 500 per group, at
+most 48 hours) so that a message someone replies to with a mention can be kept whole; they are
+never written to disk, and are gone when the daemon stops. See [`specs/scopes.md`](specs/scopes.md).
+
 How each of these works is decided in [`specs/`](specs/), not here.
 
 ## Unofficial client: read this first
