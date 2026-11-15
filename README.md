@@ -12,7 +12,9 @@ currently holds the specs, the plans, a build skeleton for both halves and the r
   session and talks to WhatsApp.
 - A **CLI** for agents and people, written in TypeScript on
   [axi-sdk-js](https://www.npmjs.com/package/axi-sdk-js), that talks only to the local daemon and
-  prints token-efficient [TOON](https://toonformat.dev/) output following the AXI conventions.
+  prints token-efficient [TOON](https://toonformat.dev/) output following the AXI conventions,
+  or with `--json` on any command one JSON document for scripts (the daemon's answer unchanged;
+  a stream such as `events --follow` prints one JSON object per line).
 - Configurable **scopes** that decide what the daemon keeps for an account (for example, only
   messages that mention the account in a group).
 

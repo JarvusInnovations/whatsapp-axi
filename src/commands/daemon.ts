@@ -1,6 +1,7 @@
 // daemon install|uninstall|start|stop|restart|status|logs|upgrade on Linux with systemd user
 // services (specs/daemon.md "Keeping it running", specs/cli.md "The daemon"), and the service
 // checks of doctor. Every call to the system goes through ctx.service.
+import { render } from "../output.js";
 import { copyFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { encode } from "@toon-format/toon";
@@ -290,7 +291,7 @@ export async function daemonLogs(ctx: Ctx, args: string[], write: (s: string) =>
   const follow = p.flags.follow === true;
   const r = await s.logs(unit, lines, follow, (l) => {
     if (!l.trim()) return;
-    if (follow) write(`${encode({ log: [{ line: l }] })}\n`);
+    if (follow) write(`${render({ log: [{ line: l }] })}\n`);
     else got.push(l);
   }, signal);
   if (r.code !== 0 && !signal?.aborted) {

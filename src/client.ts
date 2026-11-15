@@ -2,6 +2,7 @@
 // Every failure becomes a structured error; nothing here ever turns a failed read into an empty one.
 import { request } from "node:http";
 import { failure } from "./errors.js";
+import { output } from "./output.js";
 import { accountPaths, roots } from "./paths.js";
 import { VERSION } from "./version.js";
 
@@ -143,7 +144,9 @@ export class Daemon {
     const e = json.error as Json | undefined;
     if (!e || typeof e.code !== "string" || typeof e.message !== "string") throw badResponse(this.account, `status ${status} without an error body`);
     const help = helpForCode(this.account, e.code, e);
-    throw failure(e.message, e.code, help);
+    const err = failure(e.message, e.code, help) as ReturnType<typeof failure> & { details?: Json };
+    err.details = e;
+    throw err;
   }
 
   /** GET /v1/status, with the protocol check. */
@@ -170,6 +173,7 @@ export class Daemon {
     if (!this.checked) await this.status();
     const { status, json } = await this.raw(method, path, body);
     if (status < 200 || status > 299) this.fail(status, json);
+    output.body = json;
     return json;
   }
 
