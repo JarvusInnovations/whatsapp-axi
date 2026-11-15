@@ -320,8 +320,8 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if mark {
-		n := s.acct.MarkReturned(r.Context(), core.PageRefs(page))
-		page.MarkedRead = &n
+		m := s.acct.MarkReturned(r.Context(), core.PageRefs(page))
+		page.MarkRead = &m
 	}
 	writeJSON(w, http.StatusOK, page)
 }
@@ -436,7 +436,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		}
 		res := map[string]any{"events": list, "latest_seq": last}
 		if mark {
-			res["marked_read"] = s.acct.MarkReturned(ctx, core.EventRefs(list))
+			res["mark_read"] = s.acct.MarkReturned(ctx, core.EventRefs(list))
 		}
 		if eq.After != nil {
 			res["after"] = *eq.After
@@ -482,7 +482,13 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			cursor = e.Seq
 		}
 		if mark {
-			s.acct.MarkReturned(ctx, core.EventRefs(list))
+			// A mark that fails is said on the stream, and the stream goes on.
+			if m := s.acct.MarkReturned(ctx, core.EventRefs(list)); m.Failed > 0 {
+				b, _ := json.Marshal(map[string]any{"error": core.MarkFailedLine(m)})
+				if _, err := w.Write(append(b, '\n')); err != nil {
+					return
+				}
+			}
 		}
 		if flusher != nil {
 			flusher.Flush()

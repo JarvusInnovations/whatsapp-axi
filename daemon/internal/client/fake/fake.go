@@ -35,7 +35,11 @@ type Client struct {
 	contacts map[string]string // id -> address-book name
 	groups   map[string]client.GroupInfo
 
-	MarkReads   []MarkReadCall
+	MarkReads []MarkReadCall
+	// MarkReadErr, when set, is asked for each MarkRead; a non-nil error fails that receipt.
+	MarkReadErr func(chat, sender string) error
+	// TypingErr, when set, fails every SendTyping.
+	TypingErr   error
 	typing      []TypingCall
 	Requested   []string // ids passed to RequestMapping
 	Closed      bool
@@ -237,6 +241,11 @@ func (c *Client) MarkRead(_ context.Context, chat, sender string, ids []string, 
 	if c.state != "connected" {
 		return client.ErrNotConnected
 	}
+	if c.MarkReadErr != nil {
+		if err := c.MarkReadErr(chat, sender); err != nil {
+			return err
+		}
+	}
 	c.MarkReads = append(c.MarkReads, MarkReadCall{Chat: chat, Sender: sender, IDs: append([]string(nil), ids...)})
 	return nil
 }
@@ -247,8 +256,25 @@ func (c *Client) SendTyping(_ context.Context, chat string, on bool) error {
 	if c.state != "connected" {
 		return client.ErrNotConnected
 	}
+	if c.TypingErr != nil {
+		return c.TypingErr
+	}
 	c.typing = append(c.typing, TypingCall{Chat: chat, On: on})
 	return nil
+}
+
+// SetMarkReadErr sets MarkReadErr under the lock.
+func (c *Client) SetMarkReadErr(f func(chat, sender string) error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.MarkReadErr = f
+}
+
+// SetTypingErr sets TypingErr under the lock.
+func (c *Client) SetTypingErr(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.TypingErr = err
 }
 
 // Typing returns the SendTyping calls so far.

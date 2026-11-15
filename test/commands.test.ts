@@ -199,19 +199,56 @@ describe("events", () => {
   it("passes --mark-read and shows how many were marked", async () => {
     fake.route("GET /v1/events", ({ query }) => {
       expect(query.get("mark_read")).toBe("1");
-      return { body: { events, latest_seq: 413, after: 410, marked_read: 1 } };
+      return { body: { events, latest_seq: 413, after: 410, mark_read: { marked: 1, already_marked: 0, failed: 0 } } };
     });
     const r = await run(["events", "--after", "410", "--mark-read"]);
     expect(r.code).toBe(0);
-    expect(r.out).toContain("marked_read: 1");
+    expect(r.out).toContain("marked: 1");
+    expect(r.out).toContain("failed: 0");
     expect(r.out.trim().split("\n").pop()).toBe("last_seq: 413");
     fake.route("GET /v1/messages", ({ query }) => {
       expect(query.get("mark_read")).toBe("1");
-      return { body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [MESSAGE], more: false, marked_read: 1 } };
+      return { body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [MESSAGE], more: false, mark_read: { marked: 1, already_marked: 0, failed: 0 } } };
     });
     const r2 = await run(["read", GROUP, "--mark-read"]);
     expect(r2.code).toBe(0);
-    expect(r2.out).toContain("marked_read: 1");
+    expect(r2.out).toContain("marked: 1");
+  });
+
+  it("prints what it read and exits 1 with the fix when a mark was not sent", async () => {
+    fake.route("GET /v1/events", () => ({ body: { events, latest_seq: 413, after: 410, mark_read: { marked: 0, already_marked: 0, failed: 2, reason: "off" } } }));
+    const r = await run(["events", "--after", "410", "--mark-read"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("412,message");
+    expect(r.out).toContain("failed: 2");
+    expect(r.out).toContain("reason: off");
+    expect(r.out).toContain("settings set read_receipts on-read");
+    fake.route("GET /v1/messages", () => ({ body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [MESSAGE], more: false, mark_read: { marked: 0, already_marked: 0, failed: 1, reason: "not_connected" } } }));
+    const r2 = await run(["read", GROUP, "--mark-read"]);
+    expect(r2.code, r2.out).toBe(1);
+    expect(r2.out).toContain(MESSAGE.id);
+    expect(r2.out).toContain("reason: not_connected");
+    expect(r2.out).toContain("doctor");
+  });
+
+  it("follow says a failed mark on its own line, keeps streaming, and exits 1", async () => {
+    fake.route("GET /v1/events", () => ({ lines: [events[0], { error: { code: "mark_failed", message: "1 not marked", marked: 0, already_marked: 0, failed: 1, reason: "whatsapp_error" } }, events[1]] }));
+    const ac = new AbortController();
+    const { events: eventsCmd } = await import("../src/commands/read.js");
+    const { defaultCtx } = await import("../src/context.js");
+    const lines: string[] = [];
+    process.exitCode = undefined;
+    const done = eventsCmd(defaultCtx(), ["--after", "410", "--follow", "--mark-read"], (s) => {
+      lines.push(s);
+      if (lines.length === 3) ac.abort();
+    }, ac.signal);
+    const result = (await done) as { last_seq: number; help?: string[] };
+    expect(lines[1]).toContain("mark_read_failed");
+    expect(lines[1]).toContain("whatsapp_error");
+    expect(lines[2]).toContain("412,message");
+    expect(result.help?.[0]).toContain("try again");
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
   });
 
   it("without --mark-read asks for no marking", async () => {

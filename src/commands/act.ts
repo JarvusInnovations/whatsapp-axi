@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { parse, type CommandSpec } from "../args.js";
 import { expect } from "../client.js";
 import { usage } from "../errors.js";
-import { chooseAccount, type Ctx } from "../context.js";
+import { asMarkOutcome, chooseAccount, markFailed, type Ctx } from "../context.js";
 import { acctFlag, splitRef } from "./read.js";
 
 type Obj = Record<string, unknown>;
@@ -195,13 +195,22 @@ export async function markRead(ctx: Ctx, args: string[]): Promise<unknown> {
     body.through = last.id;
   }
   const res = await d.call("POST", "/v1/mark-read", body);
-  expect(d, typeof res.chat === "string" && typeof res.marked === "number", "mark-read answer is missing fields");
-  if (res.read_receipts === "off") {
-    return { marked: "read_receipts is off; no read receipt sent (no-op)", help: [`Run \`whatsapp-axi settings set read_receipts on-read${acctFlag(ctx, account)}\` to send them`] };
+  const m = asMarkOutcome(res);
+  expect(d, typeof res.chat === "string" && m, "mark-read answer is missing fields");
+  const af = acctFlag(ctx, account);
+  const retry = `whatsapp-axi mark-read ${ref !== undefined ? ref : `--chat ${chatFlag}`}${af}`;
+  const fix = markFailed(m, af, retry);
+  if (fix) {
+    // Asked for and not sent: never reported as done. A partial mark says how many went out.
+    const what = m.marked ? `${m.marked} marked read, ${m.failed} not marked` : `${m.failed} not marked`;
+    return {
+      marked: { chat: res.chat, read: m.marked, already_marked: m.already_marked, failed: m.failed, reason: m.reason ?? null },
+      error: `${what} (${m.reason ?? "unknown"})`,
+      help: [fix],
+    };
   }
-  const already = typeof res.already_marked === "number" ? res.already_marked : 0;
-  if (res.marked === 0) return { marked: `nothing new in ${res.chat as string}${already ? `; ${already} already marked read` : ""} (no-op)` };
-  return { marked: { chat: res.chat, read: res.marked, already_marked: already } };
+  if (m.marked === 0) return { marked: `nothing new in ${res.chat as string}${m.already_marked ? `; ${m.already_marked} already marked read` : ""} (no-op)` };
+  return { marked: { chat: res.chat, read: m.marked, already_marked: m.already_marked, failed: 0 } };
 }
 
 // ---- typing ----------------------------------------------------------------

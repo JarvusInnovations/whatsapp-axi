@@ -4,7 +4,7 @@ import { encode } from "@toon-format/toon";
 import { parse, parseFields, type CommandSpec } from "../args.js";
 import { expect, type Daemon } from "../client.js";
 import { usage } from "../errors.js";
-import { cell, chooseAccount, longText, pick, plural, type Ctx } from "../context.js";
+import { asMarkOutcome, cell, chooseAccount, longText, markFailed, pick, plural, type Ctx } from "../context.js";
 import { listAccounts } from "../paths.js";
 
 type Obj = Record<string, unknown>;
@@ -35,6 +35,11 @@ function who(u: unknown): string {
   const o = (u ?? {}) as Obj;
   const name = typeof o.name === "string" && o.name ? o.name : String(o.id ?? "");
   return o.me ? `${name} (me)` : name;
+}
+
+/** The printed form of a mark's outcome. */
+function markRow(m: { marked: number; already_marked: number; failed: number; reason?: string }): Obj {
+  return { marked: m.marked, already_marked: m.already_marked, failed: m.failed, ...(m.reason ? { reason: m.reason } : {}) };
 }
 
 // ---- chats -----------------------------------------------------------------
@@ -201,12 +206,28 @@ export async function events(ctx: Ctx, args: string[], write: (s: string) => voi
 
   if (p.flags.follow) {
     let last = after ?? null;
+    let unmarked = 0;
+    let reason: string | undefined;
     for await (const e of d.stream(`/v1/events${q({ ...query, follow: 1 })}`, signal)) {
+      if (e.error && typeof e.error === "object") {
+        // A mark that failed: said on the stream, and the stream goes on.
+        const m = asMarkOutcome(e.error);
+        unmarked += m?.failed ?? 0;
+        reason = m?.reason ?? reason;
+        write(`${encode({ mark_read_failed: { failed: m?.failed ?? null, marked: m?.marked ?? null, reason: m?.reason ?? null } })}\n`);
+        continue;
+      }
       expect(d, typeof e.seq === "number" && typeof e.kind === "string", "event is missing fields");
       write(`${encode({ events: pick([eventRow(e)], keys) })}\n`);
       last = e.seq as number;
     }
-    return { last_seq: last };
+    const out: Obj = { last_seq: last };
+    const fix = markFailed(unmarked ? { marked: 0, already_marked: 0, failed: unmarked, reason } : undefined, acctFlag(ctx, account), `whatsapp-axi events --after ${after ?? 0} --mark-read${acctFlag(ctx, account)}`);
+    if (fix) {
+      out.mark_read = { failed: unmarked, reason: reason ?? null };
+      out.help = [fix];
+    }
+    return out;
   }
 
   const res = await d.call("GET", `/v1/events${q(query)}`);
@@ -224,7 +245,10 @@ export async function events(ctx: Ctx, args: string[], write: (s: string) => voi
     out.help = [`Run \`whatsapp-axi events --after ${lastSeq}${af}\` for what comes next`, `Run \`whatsapp-axi message view <chat>/<id>${af}\` for a message in full`];
   }
   if (list.length === 0) out.help = [`Run \`whatsapp-axi events --after ${lastSeq} --follow${af}\` to wait for new events`];
-  if (typeof res.marked_read === "number") out.marked_read = res.marked_read;
+  const mark = asMarkOutcome(res.mark_read);
+  if (mark) out.mark_read = markRow(mark);
+  const fix = markFailed(mark, af, `whatsapp-axi events${after !== undefined ? ` --after ${after}` : ""} --mark-read${af}`);
+  if (fix) out.help = [fix, ...((out.help as string[] | undefined) ?? [])];
   out.last_seq = lastSeq;
   return out;
 }
@@ -270,9 +294,12 @@ export async function read(ctx: Ctx, args: string[]): Promise<unknown> {
     operator: (m.from as Obj | undefined)?.operator ?? null,
   }));
   const out: Obj = { chat: chat.id, count: list.length, messages: pick(rows, ["id", "t", "from", "text", ...fields]) };
-  if (typeof res.marked_read === "number") out.marked_read = res.marked_read;
+  const mark = asMarkOutcome(res.mark_read);
+  if (mark) out.mark_read = markRow(mark);
   const help = [`Run \`whatsapp-axi message view ${chat.id}/<id>${af}\` for one message in full`];
   if (res.more) help.unshift(`Run \`whatsapp-axi read ${chat.id} --before ${list[0].id}${af}\` for older messages`);
+  const fix = markFailed(mark, af, `whatsapp-axi read ${chat.id as string}${p.flags.before ? ` --before ${p.flags.before}` : ""} --mark-read${af}`);
+  if (fix) help.unshift(fix);
   out.help = help;
   return out;
 }

@@ -1,8 +1,12 @@
 package runner
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +14,34 @@ import (
 	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/client/fake"
 	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/core"
 )
+
+// follow reads a stream's lines into ch until stop is called.
+func (d *daemon) follow(path string, ch chan<- map[string]json.RawMessage) (stop func()) {
+	d.t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, "GET", "http://x"+path, nil)
+	resp, err := d.http.Do(req)
+	if err != nil {
+		cancel()
+		d.t.Fatal(err)
+	}
+	go func() {
+		defer resp.Body.Close()
+		sc := bufio.NewScanner(resp.Body)
+		sc.Buffer(make([]byte, 1<<20), 1<<20)
+		for sc.Scan() {
+			var l map[string]json.RawMessage
+			if json.Unmarshal(sc.Bytes(), &l) == nil {
+				select {
+				case ch <- l:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return cancel
+}
 
 func (d *daemon) markRead(body any) core.MarkReadResult {
 	d.t.Helper()
@@ -41,16 +73,16 @@ func TestReadReceiptsOnRead(t *testing.T) {
 
 	// A read with mark_read sends exactly one, and a second read sends none.
 	var res struct {
-		MarkedRead int `json:"marked_read"`
+		MarkRead core.MarkOutcome `json:"mark_read"`
 	}
 	d.get("/v1/events?after=0&mark_read=1", &res)
 	calls := d.fake.MarkReadCalls()
-	if res.MarkedRead != 1 || len(calls) != 1 || calls[0].Chat != group || calls[0].Sender != samLID || len(calls[0].IDs) != 1 || calls[0].IDs[0] != m1.ID {
-		t.Fatalf("marked %d, calls %+v", res.MarkedRead, calls)
+	if res.MarkRead != (core.MarkOutcome{Marked: 1}) || len(calls) != 1 || calls[0].Chat != group || calls[0].Sender != samLID || len(calls[0].IDs) != 1 || calls[0].IDs[0] != m1.ID {
+		t.Fatalf("marked %+v, calls %+v", res.MarkRead, calls)
 	}
 	d.get("/v1/events?after=0&mark_read=1", &res)
-	if res.MarkedRead != 0 || d.fake.MarkReadCount() != 1 {
-		t.Fatal("a second mark sent another receipt")
+	if res.MarkRead != (core.MarkOutcome{AlreadyMarked: 1}) || d.fake.MarkReadCount() != 1 {
+		t.Fatalf("a second mark sent another receipt: %+v", res.MarkRead)
 	}
 	if r := d.markRead(map[string]any{"chat": group, "id": m1.ID}); r.Marked != 0 || r.AlreadyMarked != 1 || r.ReadReceipts != "on-read" {
 		t.Fatalf("explicit mark of a marked message: %+v", r)
@@ -72,8 +104,8 @@ func TestReadReceiptsOnRead(t *testing.T) {
 	var page core.MessagesPage
 	d.get("/v1/messages?chat="+group+"&mark_read=1", &page)
 	calls = d.fake.MarkReadCalls()
-	if page.MarkedRead == nil || *page.MarkedRead != 2 || len(calls) != 3 || fmt.Sprint(calls[2].IDs) != fmt.Sprint([]string{m3.ID, m4.ID}) {
-		t.Fatalf("marked %v, calls %+v", page.MarkedRead, calls)
+	if page.MarkRead == nil || page.MarkRead.Marked != 2 || page.MarkRead.Failed != 0 || len(calls) != 3 || fmt.Sprint(calls[2].IDs) != fmt.Sprint([]string{m3.ID, m4.ID}) {
+		t.Fatalf("marked %+v, calls %+v", page.MarkRead, calls)
 	}
 
 	// through marks every kept incoming message up to and including the one named.
@@ -114,10 +146,26 @@ func TestReadReceiptsOnKeepAndOff(t *testing.T) {
 
 	d.patch(`{"read_receipts":"off"}`)
 	m2 := d.emit(msg("@Example again", mention))
-	d.get("/v1/events?after=0&mark_read=1", nil)
-	d.get("/v1/messages?chat="+group+"&mark_read=1", nil)
-	if r := d.markRead(map[string]any{"chat": group, "id": m2.ID}); r.Marked != 0 || r.ReadReceipts != "off" {
-		t.Fatalf("off makes marking a no-op: %+v", r)
+	// Off sends nothing, and says so: the unmarked message is failed with reason off.
+	var res struct {
+		Events   []core.Event     `json:"events"`
+		MarkRead core.MarkOutcome `json:"mark_read"`
+	}
+	d.get("/v1/events?after=0&mark_read=1", &res)
+	if len(res.Events) == 0 || res.MarkRead != (core.MarkOutcome{AlreadyMarked: 1, Failed: 1, Reason: "off"}) {
+		t.Fatalf("events under off: %+v", res.MarkRead)
+	}
+	var page core.MessagesPage
+	d.get("/v1/messages?chat="+group+"&mark_read=1", &page)
+	if len(page.Messages) != 2 || page.MarkRead == nil || page.MarkRead.Failed != 1 || page.MarkRead.Reason != "off" {
+		t.Fatalf("messages under off: %+v", page.MarkRead)
+	}
+	if r := d.markRead(map[string]any{"chat": group, "id": m2.ID}); r.Marked != 0 || r.Failed != 1 || r.Reason != "off" || r.ReadReceipts != "off" {
+		t.Fatalf("off is not reported as done: %+v", r)
+	}
+	// A message already marked is not a failure under off.
+	if r := d.markRead(map[string]any{"chat": group, "id": m.ID}); r.Failed != 0 || r.Reason != "" || r.AlreadyMarked != 1 {
+		t.Fatalf("already marked under off: %+v", r)
 	}
 	if d.fake.MarkReadCount() != 1 {
 		t.Fatal("off never sends a read receipt")
@@ -133,17 +181,74 @@ func TestMarkReadOffline(t *testing.T) {
 	fc.Emit(client.StateChange{State: "connecting", Reason: "connection lost"})
 	// Reading still works offline and leaves the message unmarked for later.
 	var res struct {
-		Events     []core.Event `json:"events"`
-		MarkedRead int          `json:"marked_read"`
+		Events   []core.Event     `json:"events"`
+		MarkRead core.MarkOutcome `json:"mark_read"`
 	}
 	d.get("/v1/events?after=0&mark_read=1", &res)
-	if len(res.Events) == 0 || res.MarkedRead != 0 {
+	if len(res.Events) == 0 || res.MarkRead != (core.MarkOutcome{Failed: 1, Reason: "not_connected"}) {
 		t.Fatalf("%+v", res)
 	}
-	d.wantError("POST", "/v1/mark-read", map[string]any{"chat": group, "id": m.ID}, 409, "not_connected")
+	if r := d.markRead(map[string]any{"chat": group, "id": m.ID}); r.Marked != 0 || r.Failed != 1 || r.Reason != "not_connected" {
+		t.Fatalf("an offline mark is not reported as done: %+v", r)
+	}
 	fc.Emit(client.StateChange{State: "connected"})
 	if r := d.markRead(map[string]any{"chat": group, "id": m.ID}); r.Marked != 1 {
 		t.Fatalf("marked once connected: %+v", r)
+	}
+}
+
+func TestMarkReadPartialAndFollow(t *testing.T) {
+	e := newEnv(t)
+	e.init()
+	d := e.start(startOpts{})
+	d.emit(msg("@Example from sam", mention))
+	m2 := d.emit(msg("@Example from alex", mention, func(m *client.Message) { m.Sender, m.SenderAlt, m.PushName = alexLID, alexPN, "Alex" }))
+	// WhatsApp refuses the receipt for one sender: the other is still sent, and the answer says
+	// how many were sent and how many were not.
+	d.fake.SetMarkReadErr(func(_, sender string) error {
+		if sender == alexLID {
+			return fmt.Errorf("refused")
+		}
+		return nil
+	})
+	r := d.markRead(map[string]any{"chat": group, "through": m2.ID})
+	if r.Marked != 1 || r.Failed != 1 || r.Reason != "whatsapp_error" {
+		t.Fatalf("partial mark: %+v", r)
+	}
+
+	// A follow stream with mark_read says a failed mark on an error line and keeps streaming.
+	d.fake.SetMarkReadErr(func(string, string) error { return fmt.Errorf("refused") })
+	lines := make(chan map[string]json.RawMessage, 16)
+	stop := d.follow("/v1/events?after=0&follow=1&mark_read=1&chat="+group, lines)
+	defer stop()
+	sawErr := false
+	deadline := time.After(5 * time.Second)
+	for !sawErr {
+		select {
+		case l := <-lines:
+			if raw, ok := l["error"]; ok {
+				var mf core.MarkFailed
+				if err := json.Unmarshal(raw, &mf); err != nil || mf.Code != "mark_failed" || mf.Failed != 1 || mf.Reason != "whatsapp_error" {
+					t.Fatalf("error line %s", raw)
+				}
+				sawErr = true
+			}
+		case <-deadline:
+			t.Fatal("no error line")
+		}
+	}
+	d.fake.SetMarkReadErr(nil)
+	m3 := d.emit(msg("@Example later", mention))
+	deadline = time.After(5 * time.Second)
+	for {
+		select {
+		case l := <-lines:
+			if raw, ok := l["message"]; ok && strings.Contains(string(raw), m3.ID) {
+				return
+			}
+		case <-deadline:
+			t.Fatal("the stream stopped after a failed mark")
+		}
 	}
 }
 

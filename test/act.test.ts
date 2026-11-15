@@ -179,10 +179,27 @@ describe("mark-read", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("no-op");
     expect(body("/v1/mark-read")).toEqual({ id: "3EB0AAAA0000000001" });
-    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 0, already_marked: 0, read_receipts: "off" } }));
+  });
+
+  it("exits 1 with the counts, the reason and the fix when nothing was sent", async () => {
+    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 0, already_marked: 0, failed: 1, reason: "off", read_receipts: "off" } }));
+    let r = await run(["mark-read", "3EB0AAAA0000000001"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("failed: 1");
+    expect(r.out).toContain("reason: off");
+    expect(r.out).toContain("settings set read_receipts on-read");
+    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 0, already_marked: 0, failed: 1, reason: "not_connected", read_receipts: "on-read" } }));
     r = await run(["mark-read", "3EB0AAAA0000000001"]);
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("read_receipts is off");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("doctor");
+  });
+
+  it("says how many were sent when a mark is partial", async () => {
+    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 2, already_marked: 1, failed: 3, reason: "whatsapp_error", read_receipts: "on-read" } }));
+    const r = await run(["mark-read", `${GROUP}/3EB0AAAA0000000001`]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("2 marked read, 3 not marked");
+    expect(r.out).toContain(`whatsapp-axi mark-read ${GROUP}/3EB0AAAA0000000001`);
   });
 
   it("needs a ref or --chat, not both, and passes errors through", async () => {
