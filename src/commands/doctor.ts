@@ -217,8 +217,21 @@ async function checkAccount(ctx: Ctx, e: AccountEntry, now: number): Promise<Che
   const since = sinceOf(time(ctx, st.since) ?? st.since);
   const sinceRaw = sinceOf(st.since);
   if (stopped) {
-    const fix = st.state === "logged_out" ? linkFix : st.state === "suspended" ? `whatsapp-axi daemon restart ${name}` : undefined;
-    const tail = `: ${stopped}${st.state === "suspended" ? "; restart after the expiry named in the reason" : ""}`;
+    const fix =
+      st.state === "logged_out"
+        ? linkFix
+        : st.state === "suspended"
+          ? `whatsapp-axi daemon restart ${name}`
+          : st.state === "outdated"
+            ? "whatsapp-axi update"
+            : undefined;
+    const after =
+      st.state === "suspended"
+        ? "; restart after the expiry named in the reason"
+        : st.state === "outdated"
+          ? "; upgrade the package (`whatsapp-axi update`), then run `whatsapp-axi daemon upgrade`"
+          : "";
+    const tail = `: ${stopped}${after}`;
     checks.push({ check: "state", status: "fail", detail: `${since}${tail}`, raw: `${sinceRaw}${tail}`, ...(fix ? { fix } : {}) });
   } else checks.push({ check: "state", status: "ok", detail: since, raw: sinceRaw });
   if (!st.me) checks.push(skipped("phone", "a link"));
