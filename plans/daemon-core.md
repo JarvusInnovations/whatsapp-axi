@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 pr: 8
 depends: []
 specs:
@@ -55,7 +55,7 @@ linking, sending, service units, packaging.
 - [x] The socket tests in `socket-protocol.md` pass for the requests in scope, including the peer check and the no-TCP check
 - [x] `whatsapp-axid init` then `run` works on a clean machine with no WhatsApp connection, and `curl --unix-socket` gets a `status` in state `unlinked`
 - [x] The daemon refuses to start on loosened file modes and on a held lock
-- [ ] `go vet`, `go test -race` and the CGO-disabled build pass in CI
+- [x] `go vet`, `go test -race` and the CGO-disabled build pass in CI
 
 ## Risks
 
