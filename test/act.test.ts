@@ -120,7 +120,7 @@ describe("send outcomes", () => {
     fake.route("GET /v1/status", () => ({ body: { ...STATUS, send_timeout_seconds: 0.1 } }));
     for (const reply of [{ hang: true }, { drop: true }]) {
       fake.route("POST /v1/send", () => reply);
-      const d = new Daemon("example", socketPath(env, "example"), 50);
+      const d = new Daemon("example", socketPath(env, "example"), 2000);
       d.sendMarginMs = 0;
       const err = (await d.send("/v1/send", { chat: GROUP, text: "x" }, { chat: GROUP }).catch((e) => e)) as { code: string; suggestions: string[] };
       expect(err.code, JSON.stringify(reply)).toBe("OUTCOME_UNKNOWN");

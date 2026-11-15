@@ -14,7 +14,7 @@ import { VERSION } from "../version.js";
 import { binaryVersion, isInstalled } from "./daemon.js";
 import { hookDir, hookStatus } from "./setup.js";
 import { installedBinary, unitName } from "../service.js";
-import type { Ctx } from "../context.js";
+import { time, type Ctx } from "../context.js";
 
 type Status3 = "ok" | "fail" | "skipped";
 
@@ -24,6 +24,8 @@ interface Check {
   detail: string;
   /** A runnable fix, printed as a hint. */
   fix?: string;
+  /** The detail with the daemon's UTC instants, for the --json-out file, when it differs. */
+  raw?: string;
 }
 
 export const doctorSpec: CommandSpec = {
@@ -211,28 +213,34 @@ async function checkAccount(ctx: Ctx, e: AccountEntry, now: number): Promise<Che
   if (st.me) checks.push({ check: "link", status: "ok", detail: `linked as ${st.me.pn ?? st.me.id}` });
   else if (st.state === "linking") checks.push({ check: "link", status: "ok", detail: "a link attempt is running" });
   else checks.push({ check: "link", status: "fail", detail: "not linked to WhatsApp", fix: linkFix });
-  const since = `${st.state} since ${st.since}${st.reason ? ` (${st.reason})` : ""}`;
+  const sinceOf = (t: string) => `${st.state} since ${t}${st.reason ? ` (${st.reason})` : ""}`;
+  const since = sinceOf(time(ctx, st.since) ?? st.since);
+  const sinceRaw = sinceOf(st.since);
   if (stopped) {
     const fix = st.state === "logged_out" ? linkFix : st.state === "suspended" ? `whatsapp-axi daemon restart ${name}` : undefined;
-    checks.push({
-      check: "state",
-      status: "fail",
-      detail: `${since}: ${stopped}${st.state === "suspended" ? "; restart after the expiry named in the reason" : ""}`,
-      ...(fix ? { fix } : {}),
-    });
-  } else checks.push({ check: "state", status: "ok", detail: since });
+    const tail = `: ${stopped}${st.state === "suspended" ? "; restart after the expiry named in the reason" : ""}`;
+    checks.push({ check: "state", status: "fail", detail: `${since}${tail}`, raw: `${sinceRaw}${tail}`, ...(fix ? { fix } : {}) });
+  } else checks.push({ check: "state", status: "ok", detail: since, raw: sinceRaw });
   if (!st.me) checks.push(skipped("phone", "a link"));
   else if (st.last_phone_activity) {
     const age = now - Date.parse(st.last_phone_activity);
     const days = Math.floor(age / DAY);
+    const shown = time(ctx, st.last_phone_activity) ?? st.last_phone_activity;
+    const stale = `, ${days} days ago; WhatsApp unlinks a device whose phone has been away about fourteen days: open WhatsApp on the account's phone`;
     checks.push(
       age >= 12 * DAY
         ? {
             check: "phone",
             status: "fail",
-            detail: `last phone activity (approximate) ${st.last_phone_activity}, ${days} days ago; WhatsApp unlinks a device whose phone has been away about fourteen days: open WhatsApp on the account's phone`,
+            detail: `last phone activity (approximate) ${shown}${stale}`,
+            raw: `last phone activity (approximate) ${st.last_phone_activity}${stale}`,
           }
-        : { check: "phone", status: "ok", detail: `last phone activity (approximate) ${st.last_phone_activity}, ${days} days ago` },
+        : {
+            check: "phone",
+            status: "ok",
+            detail: `last phone activity (approximate) ${shown}, ${days} days ago`,
+            raw: `last phone activity (approximate) ${st.last_phone_activity}, ${days} days ago`,
+          },
     );
   } else checks.push({ check: "phone", status: "ok", detail: "no phone activity seen yet (approximate)" });
   try {
@@ -290,10 +298,12 @@ export async function doctor(ctx: Ctx, args: string[]): Promise<unknown> {
   const now = ctx.io.now();
   const out: Record<string, unknown> = {};
   const rows: { account: string; check: string; status: Status3; detail: string }[] = [];
+  const rawRows: { account: string; check: string; status: Status3; detail: string }[] = [];
   const fixes: string[] = [];
   const add = (account: string, checks: Check[]) => {
     for (const c of checks) {
       rows.push({ account, check: c.check, status: c.status, detail: c.detail });
+      rawRows.push({ account, check: c.check, status: c.status, detail: c.raw ?? c.detail });
       if (c.status === "fail" && c.fix) fixes.push(fixLine(account, c.check, c.fix));
     }
   };
@@ -362,6 +372,8 @@ export async function doctor(ctx: Ctx, args: string[]): Promise<unknown> {
     fixes.push("Run `whatsapp-axi account add <name>` to create an account");
   }
   if (p.flags.summary) {
+    // One line: no time is shown, so no zone is named.
+    ctx.tzUsed = false;
     return {
       doctor: failed.length
         ? `${failed.length} failed of ${rows.length} checks: ${failed.map((r) => `${r.account} ${r.check}`).join(", ")}`
@@ -369,6 +381,8 @@ export async function doctor(ctx: Ctx, args: string[]): Promise<unknown> {
       ...(failed.length ? { help: ["Run `whatsapp-axi doctor` to see each check and its fix"] } : {}),
     };
   }
+  const summary = failed.length ? `${failed.length} failed of ${rows.length} checks` : `${rows.length} checks, none failed`;
+  ctx.exportDoc = { ...(ctx.acted ? { account: ctx.acted.name } : {}), ...out, summary, checks: rawRows };
   return {
     ...out,
     summary: failed.length ? `${failed.length} failed of ${rows.length} checks` : `${rows.length} checks, none failed`,

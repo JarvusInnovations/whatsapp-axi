@@ -259,7 +259,7 @@ async function runHandler(ctx: Ctx, spec: CommandSpec, handler: Handler, argsIn:
           ? annotate(shown, exportLines(file, `${file.lines} JSON ${file.lines === 1 ? "line" : "lines"}`), jqHint(file.path, undefined, true))
           : shown;
       }
-      const doc = local || output.body === undefined ? withoutHelp(shown) : output.body;
+      const doc = local ? (ctx.exportDoc ?? withoutHelp(shown)) : output.body === undefined ? withoutHelp(shown) : output.body;
       writeDoc(doc);
       closeJsonOut();
       // An export failure never undoes a success: the result, then export_error, and exit 1.
