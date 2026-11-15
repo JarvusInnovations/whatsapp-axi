@@ -21,7 +21,7 @@ import {
   daemonUpgradeSpec,
 } from "./commands/daemon.js";
 import { doctor, doctorSpec } from "./commands/doctor.js";
-import { chatView, chatViewSpec, chats, chatsSpec, events, eventsSpec, forget, forgetSpec, messageView, messageViewSpec, read, readSpec } from "./commands/read.js";
+import { chatView, chatViewSpec, chats, chatsSpec, events, eventsSpec, forget, forgetSpec, messageView, messageViewSpec, groups, groupsSpec, read, readSpec } from "./commands/read.js";
 import {
   operatorsAddSpec,
   operatorsChange,
@@ -54,7 +54,7 @@ commands[20]:
   daemon start|stop|restart|status <name>, daemon logs <name> [--lines N] [--follow], daemon upgrade
   daemon run <name> (foreground)
   doctor [--account <name>]
-  chats, chat view <chat>
+  chats, groups, chat view <chat>
   events [--after <seq>] [--limit N] [--chat <chat>] [--kind <kind>] [--follow] [--mark-read]
   read <chat> [--limit N] [--before <id>] [--mark-read]
   message view <ref> [--full]
@@ -106,6 +106,7 @@ const SINGLE: Record<string, Sub> = {
   accounts: { spec: accountsSpec, run: accounts },
   doctor: { spec: doctorSpec, run: (c, a) => doctor(c, a) },
   chats: { spec: chatsSpec, run: chats },
+  groups: { spec: groupsSpec, run: groups },
   events: { spec: eventsSpec, run: runEvents },
   read: { spec: readSpec, run: read },
   forget: { spec: forgetSpec, run: forget },

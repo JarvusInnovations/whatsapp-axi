@@ -18,6 +18,7 @@ const GROUP = "120363000000000001@g.us";
 /** One valid invocation per daemon-backed command. */
 const DAEMON_BACKED: string[][] = [
   ["chats"],
+  ["groups"],
   ["chat", "view", GROUP],
   ["events"],
   ["events", "--follow"],

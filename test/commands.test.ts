@@ -242,6 +242,35 @@ describe("events", () => {
   });
 });
 
+describe("groups", () => {
+  const GROUPS = [
+    { id: GROUP, name: "Example group", scope: "tagged", members: 5, discarded: 12 },
+    { id: "120363000000000002@g.us", name: "Quiet group", scope: "none", override: "none", members: 3, discarded: 0 },
+  ];
+
+  it("lists every group with four columns, discard count on --fields", async () => {
+    fake.route("GET /v1/groups", () => ({ body: { groups: GROUPS } }));
+    let r = await run(["groups"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("groups[2]{id,name,scope,members}:");
+    expect(r.out).toContain("Quiet group,none,3");
+    r = await run(["groups", "--fields", "discarded"]);
+    expect(r.out).toContain("groups[2]{id,name,scope,members,discarded}:");
+    expect(r.out).toContain("tagged,5,12");
+  });
+
+  it("says so when there are none, and passes not_connected through", async () => {
+    fake.route("GET /v1/groups", () => ({ body: { groups: [] } }));
+    let r = await run(["groups"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("0 groups");
+    fake.route("GET /v1/groups", () => apiError(409, "not_connected", "Listing groups needs a live connection to WhatsApp; the account is connecting.", { state: "connecting" }));
+    r = await run(["groups"]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("code: not_connected");
+  });
+});
+
 describe("read and message view", () => {
   it("reads a chat oldest first", async () => {
     fake.route("GET /v1/messages", ({ query }) => {

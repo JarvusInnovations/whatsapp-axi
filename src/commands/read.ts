@@ -66,6 +66,33 @@ export async function chats(ctx: Ctx, args: string[]): Promise<unknown> {
   };
 }
 
+// ---- groups ----------------------------------------------------------------
+
+export const groupsSpec: CommandSpec = {
+  name: "groups",
+  summary: "Every group the account is a member of, kept content or not: id, name, effective scope, member count",
+  positionals: [],
+  flags: { account: ACCOUNT, fields: { type: "string", value: "<list>", desc: "add columns: discarded, override" } },
+  examples: ["whatsapp-axi groups", "whatsapp-axi groups --fields discarded"],
+};
+
+export async function groups(ctx: Ctx, args: string[]): Promise<unknown> {
+  const p = parse(groupsSpec, args);
+  const fields = parseFields(groupsSpec, p.flags.fields, ["discarded", "override"]);
+  const account = chooseAccount(ctx, p.flags.account, "groups");
+  const d = ctx.daemon(account);
+  const res = await d.call("GET", "/v1/groups");
+  expect(d, Array.isArray(res.groups), "groups is not a list");
+  const list = (res.groups as Obj[]).map((g) => ({ ...g, override: g.override ?? null }));
+  const af = acctFlag(ctx, account);
+  if (list.length === 0) return { groups: "0 groups: the account is not a member of any group" };
+  return {
+    count: list.length,
+    groups: pick(list, ["id", "name", "scope", "members", ...fields]),
+    help: [`Run \`whatsapp-axi chat view <group>${af}\` for its participants`, `Run \`whatsapp-axi scope set --chat <group> <scope>${af}\` to change what is kept from it`],
+  };
+}
+
 // ---- chat view -------------------------------------------------------------
 
 export const chatViewSpec: CommandSpec = {
