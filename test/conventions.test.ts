@@ -41,7 +41,7 @@ describe("with no daemon running", () => {
       const r = await run(argv);
       expect(r.code, argv.join(" ")).toBe(1);
       expect(r.out, argv.join(" ")).toContain("code: daemon_not_running");
-      expect(r.out, argv.join(" ")).toContain("whatsapp-axi daemon run example");
+      expect(r.out, argv.join(" ")).toContain("whatsapp-axi daemon start example");
     }
   });
 
@@ -49,7 +49,7 @@ describe("with no daemon running", () => {
     addAccount(env, "example");
     const r = await run(["doctor"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("whatsapp-axi daemon run example");
+    expect(r.out).toContain("whatsapp-axi daemon start example");
   });
 });
 

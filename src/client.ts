@@ -7,9 +7,9 @@ import { VERSION } from "./version.js";
 
 export const PROTOCOL = 1;
 
-/** Fix commands named in errors. */
+/** Fix commands named in errors: the service start (daemon start says how to install it). */
 export function startCommand(account: string): string {
-  return `whatsapp-axi daemon run ${account}`;
+  return `whatsapp-axi daemon start ${account}`;
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -31,7 +31,9 @@ export interface Status {
 type Json = Record<string, unknown>;
 
 function notRunning(account: string) {
-  return failure(`The daemon of account ${account} is not running.`, "daemon_not_running", [`Run \`${startCommand(account)}\` to start it`]);
+  return failure(`The daemon of account ${account} is not running.`, "daemon_not_running", [
+    `Run \`${startCommand(account)}\` to start it (\`whatsapp-axi daemon install ${account}\` first if it is not installed as a service)`,
+  ]);
 }
 
 function badResponse(account: string, what: string) {

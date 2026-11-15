@@ -419,7 +419,7 @@ describe("accounts and the home view", () => {
     expect(r.out).toContain("accounts[2]{name,state,scope}:");
     expect(r.out).toContain("example,connected,tagged");
     expect(r.out).toContain("other,stopped,null");
-    expect(r.out).toContain("whatsapp-axi daemon run other");
+    expect(r.out).toContain("whatsapp-axi daemon start other");
     r = await run(["accounts", "--fields", "phone"]);
     expect(r.out).toContain("{name,state,scope,phone}");
     expect(r.out).toContain("+15550100000");
@@ -471,7 +471,7 @@ describe("doctor", () => {
     const r = await run(["doctor"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("other,daemon,fail,not running");
-    expect(r.out).toContain("whatsapp-axi daemon run other");
+    expect(r.out).toContain("whatsapp-axi daemon start other");
     expect(r.out).toContain("chmod 600");
     expect(r.out).toContain("example,state,fail");
     expect(r.out).toContain("example,phone,warn");
