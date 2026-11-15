@@ -5,6 +5,8 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+    # edited: a stacked PR that is retargeted is checked against its new base.
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -77,6 +79,31 @@ jobs:
 
       - name: The skill is current with the command reference
         run: npm run docs:check
+
+      - name: Smoke test the built CLI with no account and no daemon
+        # --version and --help never reach dispatch. A real command with no account must give a
+        # structured error with its code and exit status, never a crash or a stack trace.
+        run: |
+          set +e
+          tmp=$(mktemp -d)
+          export HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_STATE_HOME="$tmp/state" XDG_DATA_HOME="$tmp/data" XDG_RUNTIME_DIR="$tmp/run"
+          mkdir -p "$HOME" "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          node dist/bin/whatsapp-axi.js --version
+          out=$(node dist/bin/whatsapp-axi.js chats 2>&1); code=$?
+          echo "$out"
+          if [ "$code" -ne 1 ]; then echo "::error::chats: expected exit 1, got $code"; exit 1; fi
+          if ! echo "$out" | grep -q '^code: NO_ACCOUNT$'; then echo "::error::chats: expected code NO_ACCOUNT"; exit 1; fi
+          out2=$(node dist/bin/whatsapp-axi.js chats --bogus 2>&1); code2=$?
+          echo "$out2"
+          if [ "$code2" -ne 2 ]; then echo "::error::chats --bogus: expected exit 2, got $code2"; exit 1; fi
+          if ! echo "$out2" | grep -q '^code: UNKNOWN_FLAG$'; then echo "::error::chats --bogus: expected code UNKNOWN_FLAG"; exit 1; fi
+          home=$(node dist/bin/whatsapp-axi.js 2>&1); code3=$?
+          if [ "$code3" -ne 0 ]; then echo "::error::home: expected exit 0, got $code3"; exit 1; fi
+          if echo "$out$out2$home" | grep -qE '^\s+at |node:internal'; then echo "::error::a stack trace reached the output"; exit 1; fi
+          echo "smoke test passed"
+
+      - name: Scrub gate (public repository)
+        run: npm run check:scrub
 
       - uses: actions/setup-go@v7
         with:
