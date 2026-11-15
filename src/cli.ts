@@ -4,6 +4,22 @@ import { renderHelp, type CommandSpec } from "./args.js";
 import { accountAdd, accountAddSpec, accountRemove, accountRemoveSpec, accounts, accountsSpec, daemonRun, daemonRunSpec, home } from "./commands/accounts.js";
 import { download, downloadSpec, react, reactSpec, send, sendFile, sendFileSpec, sendSpec } from "./commands/act.js";
 import { authLink, authLinkSpec, authLogout, authLogoutSpec } from "./commands/auth.js";
+import {
+  daemonControl,
+  daemonInstall,
+  daemonInstallSpec,
+  daemonLogs,
+  daemonLogsSpec,
+  daemonRestartSpec,
+  daemonStartSpec,
+  daemonStatus,
+  daemonStatusSpec,
+  daemonStopSpec,
+  daemonUninstall,
+  daemonUninstallSpec,
+  daemonUpgrade,
+  daemonUpgradeSpec,
+} from "./commands/daemon.js";
 import { doctor, doctorSpec } from "./commands/doctor.js";
 import { chatView, chatViewSpec, chats, chatsSpec, events, eventsSpec, forget, forgetSpec, messageView, messageViewSpec, read, readSpec } from "./commands/read.js";
 import {
@@ -34,7 +50,9 @@ commands[18]:
   (none)=home: accounts with state and scope
   accounts, account add <name>, account remove <name> --confirm <name>
   auth link --phone <number> | --qr, auth logout --confirm
-  daemon run <name>
+  daemon install <name> [--dry-run] [--no-linger-check], daemon uninstall <name> --confirm
+  daemon start|stop|restart|status <name>, daemon logs <name> [--lines N] [--follow], daemon upgrade
+  daemon run <name> (foreground)
   doctor [--account <name>]
   chats, chat view <chat>
   events [--after <seq>] [--limit N] [--chat <chat>] [--kind <kind>] [--follow]
@@ -98,7 +116,17 @@ const SINGLE: Record<string, Sub> = {
 const GROUPS: Record<string, Record<string, Sub>> = {
   account: { add: { spec: accountAddSpec, run: accountAdd }, remove: { spec: accountRemoveSpec, run: accountRemove } },
   auth: { link: { spec: authLinkSpec, run: streaming(authLink) }, logout: { spec: authLogoutSpec, run: authLogout } },
-  daemon: { run: { spec: daemonRunSpec, run: daemonRun } },
+  daemon: {
+    install: { spec: daemonInstallSpec, run: daemonInstall },
+    uninstall: { spec: daemonUninstallSpec, run: daemonUninstall },
+    start: { spec: daemonStartSpec, run: (c, a) => daemonControl(c, a, "start") },
+    stop: { spec: daemonStopSpec, run: (c, a) => daemonControl(c, a, "stop") },
+    restart: { spec: daemonRestartSpec, run: (c, a) => daemonControl(c, a, "restart") },
+    status: { spec: daemonStatusSpec, run: daemonStatus },
+    logs: { spec: daemonLogsSpec, run: streaming(daemonLogs) },
+    upgrade: { spec: daemonUpgradeSpec, run: daemonUpgrade },
+    run: { spec: daemonRunSpec, run: daemonRun },
+  },
   chat: { view: { spec: chatViewSpec, run: chatView } },
   message: { view: { spec: messageViewSpec, run: messageView } },
   scope: { show: { spec: scopeShowSpec, run: scopeShow }, set: { spec: scopeSetSpec, run: scopeSet }, "dm-from": { spec: scopeDMFromSpec, run: scopeDMFrom } },

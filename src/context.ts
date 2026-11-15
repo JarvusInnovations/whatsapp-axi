@@ -1,17 +1,27 @@
 // Shared command plumbing: choosing the account (specs/cli.md "Choosing the account"), the daemon
 // client, and small output helpers.
 import { Daemon } from "./client.js";
+import { SystemdUser, type ServiceManager } from "./service.js";
 import { failure, usage } from "./errors.js";
 import { accountExists, listAccounts, roots, validAccount, accountPaths, type Roots } from "./paths.js";
 
 export interface Ctx {
   roots: Roots;
   daemon(account: string): Daemon;
+  /** The service manager of the daemon commands (systemd user services on Linux). */
+  service: ServiceManager;
+}
+
+let serviceFactory: () => ServiceManager = () => new SystemdUser();
+
+/** Replaces the service manager (tests use a fake). */
+export function setServiceFactory(f: () => ServiceManager): void {
+  serviceFactory = f;
 }
 
 export function defaultCtx(): Ctx {
   const r = roots();
-  return { roots: r, daemon: (a) => new Daemon(a, accountPaths(a, r).socket) };
+  return { roots: r, daemon: (a) => new Daemon(a, accountPaths(a, r).socket), service: serviceFactory() };
 }
 
 /** Resolves --account: required with several accounts, optional with exactly one. */
