@@ -57,7 +57,10 @@ func Translate(raw any, own client.Own) []client.Event {
 	case *events.Connected:
 		return []client.Event{client.StateChange{State: "connected"}}
 	case *events.Disconnected:
-		return []client.Event{client.StateChange{State: "connecting", Reason: "connection lost; reconnecting"}}
+		return []client.Event{client.StateChange{State: "connecting", Reason: reasonConnectionLost}}
+	case *events.PushNameSetting, *events.AppStateSyncComplete:
+		// The account's own name arrives through app-state sync; presence waits for it.
+		return []client.Event{client.PushNameReady{}}
 	case *events.LoggedOut:
 		return []client.Event{client.StateChange{State: "logged_out", Reason: loggedOutReason(e)}}
 	case *events.TemporaryBan:
@@ -71,6 +74,8 @@ func Translate(raw any, own client.Own) []client.Event {
 	}
 	return nil
 }
+
+const reasonConnectionLost = "connection lost; reconnecting"
 
 func timeOr(t time.Time) time.Time {
 	if t.IsZero() {

@@ -98,7 +98,11 @@ type PhoneActivity struct {
 	Time time.Time
 }
 
-// Event is one of *Message, StateChange or PhoneActivity.
+// PushNameReady reports that the account's own display name is known to the library, after
+// app-state sync. Presence cannot be announced before it.
+type PushNameReady struct{}
+
+// Event is one of *Message, StateChange, PhoneActivity or PushNameReady.
 type Event any
 
 // Handler receives events. The client calls it from one goroutine at a time.
@@ -125,6 +129,10 @@ type Own struct {
 
 // ErrNotConnected is returned by calls that need a live connection.
 var ErrNotConnected = errors.New("not connected")
+
+// ErrNoPushName: presence cannot be announced until the account's own name has synced from the
+// phone. The client emits PushNameReady when it has.
+var ErrNoPushName = errors.New("the account's name has not synced yet")
 
 // Link errors (specs/daemon.md "Linking").
 var (

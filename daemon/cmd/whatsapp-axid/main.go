@@ -108,7 +108,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	err := runner.Run(ctx, runner.Options{
 		Account: *account, Version: version, Log: stderr, Level: lv,
-		NewClient: func(s *sqlstore.Container, _ bool, log *slog.Logger) client.Client { return wa.New(s, log) },
+		NewClient: func(s *sqlstore.Container, hasSession bool, log *slog.Logger) client.Client {
+			return wa.New(s, hasSession, log)
+		},
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "whatsapp-axid run: %v\n", err)

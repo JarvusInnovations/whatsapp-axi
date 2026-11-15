@@ -60,11 +60,32 @@ type Client struct {
 
 	mapMu     sync.Mutex
 	requested map[string]time.Time
+
+	// live reports whether the library is connected and logged in right now. Tests replace it;
+	// nil asks the library.
+	live func() bool
 }
 
-// New returns an adapter over an opened session store. It does not connect.
-func New(container *sqlstore.Container, log *slog.Logger) *Client {
-	return &Client{container: container, log: log, state: "unlinked", reason: "no session", requested: map[string]time.Time{}}
+// New returns an adapter over an opened session store. It does not connect. hasSession says
+// whether the store holds a linked device, so the first state reported is the one the session
+// implies: connecting when there is one, unlinked when there is none.
+func New(container *sqlstore.Container, hasSession bool, log *slog.Logger) *Client {
+	c := &Client{container: container, log: log, state: "unlinked", reason: "no session", requested: map[string]time.Time{}}
+	if hasSession {
+		c.state, c.reason = "connecting", "starting"
+	}
+	return c
+}
+
+// isLive reports whether the library's connection is up and logged in.
+func (c *Client) isLive() bool {
+	c.mu.Lock()
+	live, wa := c.live, c.wa
+	c.mu.Unlock()
+	if live != nil {
+		return live()
+	}
+	return wa != nil && wa.IsConnected() && wa.IsLoggedIn()
 }
 
 // Configure applies every library setting the daemon depends on to a library client. It is
@@ -106,13 +127,17 @@ func (c *Client) Start(ctx context.Context, h client.Handler) error {
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.wa = c.newLibraryClient(dev)
 	linked := dev.ID != nil
-	if linked {
+	changed := false
+	if linked && (c.state != "connecting" || c.reason != "starting") {
 		c.state, c.reason = "connecting", "starting"
+		changed = true
 	}
 	wa := c.wa
 	c.mu.Unlock()
-	if linked {
+	if changed {
 		c.emit(client.StateChange{State: "connecting", Reason: "starting"})
+	}
+	if linked {
 		go func() {
 			if err := wa.ConnectContext(c.ctx); err != nil {
 				c.log.Warn("connecting failed; the library retries", "err", err)
@@ -143,9 +168,11 @@ func (c *Client) State() (string, string) {
 	return c.state, c.reason
 }
 
+// setState records and reports a state. While linking the daemon owns the state, so nothing is
+// reported; an unchanged state is not reported again.
 func (c *Client) setState(st, reason string) {
 	c.mu.Lock()
-	if c.linking {
+	if c.linking || c.state == st && c.reason == reason {
 		c.mu.Unlock()
 		return
 	}
@@ -173,14 +200,34 @@ func (c *Client) lib() *whatsmeow.Client {
 }
 
 // onEvent receives every library event.
+//
+// The library dispatches Disconnected from its own goroutine, so the Disconnected of an old socket
+// can arrive after the Connected of its replacement: after a pairing, the library reconnects as
+// the new device at once, and the pairing socket's Disconnected lands after the new Connected
+// (docs/research/whatsmeow.md). For these two events the state is therefore derived from the
+// library's connection as it is now, not from which event came last.
 func (c *Client) onEvent(raw any) {
 	c.mu.Lock()
 	own := ownOf(c.device)
+	pushName := c.device != nil && c.device.PushName != ""
 	c.mu.Unlock()
+	switch raw.(type) {
+	case *events.Connected, *events.Disconnected:
+		if c.isLive() {
+			c.setState("connected", "")
+		} else {
+			c.setState("connecting", reasonConnectionLost)
+		}
+		return
+	}
 	for _, ev := range Translate(raw, own) {
 		switch e := ev.(type) {
 		case client.StateChange:
 			c.setState(e.State, e.Reason)
+		case client.PushNameReady:
+			if pushName {
+				c.emit(ev)
+			}
 		default:
 			c.emit(ev)
 		}
@@ -370,7 +417,12 @@ func (c *Client) SendPresence(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return wa.SendPresence(ctx, types.PresenceAvailable)
+	if err := wa.SendPresence(ctx, types.PresenceAvailable); errors.Is(err, whatsmeow.ErrNoPushName) {
+		return client.ErrNoPushName
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 // Link links by pairing code or QR code (specs/daemon.md "Linking"). The pairing is refused
@@ -391,21 +443,7 @@ func (c *Client) Link(ctx context.Context, req client.LinkRequest, progress func
 	c.linking = true
 	c.mu.Unlock()
 	finished := false
-	defer func() {
-		c.mu.Lock()
-		c.linking = false
-		if finished {
-			c.state, c.reason = "connected", ""
-		} else {
-			c.state, c.reason = "unlinked", "no session"
-		}
-		c.mu.Unlock()
-		if finished {
-			c.emit(client.StateChange{State: "connected"})
-		} else {
-			wa.Disconnect()
-		}
-	}()
+	defer func() { c.endLink(wa, finished) }()
 
 	refused := make(chan struct{}, 1)
 	wa.PrePairCallback = PrePair(req.Phone, refused)
@@ -479,6 +517,24 @@ func (c *Client) Link(ctx context.Context, req client.LinkRequest, progress func
 				return fmt.Errorf("link ended with %s", item.Event)
 			}
 		}
+	}
+}
+
+// endLink ends a link attempt: on success the state is connected, and reported; otherwise the
+// attempt's connection is dropped and the state is unlinked, which the daemon records itself.
+func (c *Client) endLink(wa *whatsmeow.Client, finished bool) {
+	c.mu.Lock()
+	c.linking = false
+	if finished {
+		c.state, c.reason = "connected", ""
+	} else {
+		c.state, c.reason = "unlinked", "no session"
+	}
+	c.mu.Unlock()
+	if finished {
+		c.emit(client.StateChange{State: "connected"})
+	} else if wa != nil {
+		wa.Disconnect()
 	}
 }
 

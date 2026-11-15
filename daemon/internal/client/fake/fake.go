@@ -32,7 +32,9 @@ type Client struct {
 	Requested []string // ids passed to RequestMapping
 	Closed    bool
 	Presences int // SendPresence calls
-	LoggedOut bool
+	// NoPushName makes SendPresence fail with ErrNoPushName, as before app-state sync.
+	NoPushName bool
+	LoggedOut  bool
 
 	// Linking is what the next Link call does.
 	Linking LinkPlan
@@ -217,8 +219,18 @@ func (c *Client) SendPresence(context.Context) error {
 	if c.state != "connected" {
 		return client.ErrNotConnected
 	}
+	if c.NoPushName {
+		return client.ErrNoPushName
+	}
 	c.Presences++
 	return nil
+}
+
+// SetPushName ends (or starts) the fake's lack of a push name.
+func (c *Client) SetPushName(known bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.NoPushName = !known
 }
 
 // PresenceCount returns how many SendPresence calls succeeded.

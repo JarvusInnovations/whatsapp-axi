@@ -58,6 +58,11 @@ type Account struct {
 	linkMu  sync.Mutex
 	linking bool
 
+	// presMu guards the once-per-connect presence announcement.
+	presMu      sync.Mutex
+	presPending bool
+	presNoted   bool
+
 	// sendMu makes sends and reactions reach the client strictly one after another.
 	sendMu sync.Mutex
 	limits *limiter
@@ -109,6 +114,8 @@ func (a *Account) Handle(ev client.Event) {
 		}
 	case client.PhoneActivity:
 		a.setMeta(ctx, "last_phone_activity", rfc3339(e.Time))
+	case client.PushNameReady:
+		a.onPushNameReady()
 	}
 }
 
