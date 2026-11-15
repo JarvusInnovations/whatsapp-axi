@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { send } from "../src/commands/act.js";
 import { defaultCtx } from "../src/context.js";
-import { addAccount, apiError, FakeDaemon, makeEnv, run, socketPath, type Env } from "./helpers.js";
+import { addAccount, apiError, FakeDaemon, makeEnv, run, socketPath, STATUS, type Env } from "./helpers.js";
 
 const GROUP = "120363000000000001@g.us";
 let env: Env;
@@ -17,7 +17,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await fake.close();
-  env.cleanup();
+  await env.cleanup();
 });
 
 const SENT = { id: "3EB0F0000000000001", chat: GROUP, t: "2030-01-05T15:00:00Z" };
@@ -72,6 +72,46 @@ describe("send", () => {
     const r = await run(["send", GROUP, "x"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("code: bad_response");
+  });
+});
+
+describe("send outcomes", () => {
+  it("waits at least the daemon's own send timeout, never a shorter limit of its own", async () => {
+    const { Daemon } = await import("../src/client.js");
+    const d = new Daemon("example", socketPath(env, "example"));
+    expect(d.sendTimeoutMs({ send_timeout_seconds: 600 })).toBeGreaterThanOrEqual(600_000);
+    expect(d.sendTimeoutMs({})).toBeGreaterThanOrEqual(600_000);
+    expect(d.sendTimeoutMs({ send_timeout_seconds: 1 })).toBeGreaterThanOrEqual(30_000);
+  });
+
+  it("is outcome_unknown, with the read-first help, when the client stops waiting or the connection drops", async () => {
+    const { Daemon } = await import("../src/client.js");
+    fake.route("GET /v1/status", () => ({ body: { ...STATUS, send_timeout_seconds: 0.1 } }));
+    for (const reply of [{ hang: true }, { drop: true }]) {
+      fake.route("POST /v1/send", () => reply);
+      const d = new Daemon("example", socketPath(env, "example"), 50);
+      d.sendMarginMs = 0;
+      const err = (await d.send("/v1/send", { chat: GROUP, text: "x" }, GROUP).catch((e) => e)) as { code: string; suggestions: string[] };
+      expect(err.code, JSON.stringify(reply)).toBe("outcome_unknown");
+      expect(err.suggestions[0]).toContain(`whatsapp-axi read ${GROUP}`);
+      expect(err.suggestions[0]).toContain("before sending again");
+    }
+  });
+
+  it("renders the daemon's outcome_unknown and a success with a warning", async () => {
+    fake.route("POST /v1/send", () => apiError(504, "outcome_unknown", "Sending: the daemon could not tell whether WhatsApp accepted it; it may have gone out."));
+    let r = await run(["send", GROUP, "hello"]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("code: outcome_unknown");
+    expect(r.out).toContain(`whatsapp-axi read ${GROUP}`);
+    fake.route("POST /v1/send", () => ({ body: { ...SENT, warning: "WhatsApp accepted it, but the daemon could not record it in full." } }));
+    r = await run(["send", GROUP, "hello"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("warning:");
+    fake.route("POST /v1/react", () => ({ body: { chat: GROUP, id: "3EB0AAAA0000000001", emoji: "👍", changed: true, warning: "not recorded" } }));
+    r = await run(["react", `${GROUP}/3EB0AAAA0000000001`, "👍"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("warning: not recorded");
   });
 });
 
@@ -179,10 +219,27 @@ describe("mark-read", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("no-op");
     expect(body("/v1/mark-read")).toEqual({ id: "3EB0AAAA0000000001" });
-    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 0, already_marked: 0, read_receipts: "off" } }));
+  });
+
+  it("exits 1 with the counts, the reason and the fix when nothing was sent", async () => {
+    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 0, already_marked: 0, failed: 1, reason: "off", read_receipts: "off" } }));
+    let r = await run(["mark-read", "3EB0AAAA0000000001"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("failed: 1");
+    expect(r.out).toContain("reason: off");
+    expect(r.out).toContain("settings set read_receipts on-read");
+    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 0, already_marked: 0, failed: 1, reason: "not_connected", read_receipts: "on-read" } }));
     r = await run(["mark-read", "3EB0AAAA0000000001"]);
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("read_receipts is off");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("doctor");
+  });
+
+  it("says how many were sent when a mark is partial", async () => {
+    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 2, already_marked: 1, failed: 3, reason: "whatsapp_error", read_receipts: "on-read" } }));
+    const r = await run(["mark-read", `${GROUP}/3EB0AAAA0000000001`]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("2 marked read, 3 not marked");
+    expect(r.out).toContain(`whatsapp-axi mark-read ${GROUP}/3EB0AAAA0000000001`);
   });
 
   it("needs a ref or --chat, not both, and passes errors through", async () => {

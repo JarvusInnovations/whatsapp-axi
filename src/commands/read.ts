@@ -4,11 +4,17 @@ import { encode } from "@toon-format/toon";
 import { parse, parseFields, type CommandSpec } from "../args.js";
 import { expect, type Daemon } from "../client.js";
 import { usage } from "../errors.js";
-import { cell, chooseAccount, longText, pick, plural, type Ctx } from "../context.js";
+import { asMarkOutcome, cell, chooseAccount, longText, markFailed, pick, plural, type Ctx } from "../context.js";
 import { listAccounts } from "../paths.js";
 
 type Obj = Record<string, unknown>;
 const ACCOUNT = { type: "string" as const, value: "<name>", desc: "the account (required when there are several)" };
+
+function listLimit(v: unknown): number | undefined {
+  const n = v as number | undefined;
+  if (n !== undefined && (n < 1 || n > 10000)) throw usage("--limit must be from 1 to 10000");
+  return n;
+}
 
 function enc(s: string): string {
   return encodeURIComponent(s);
@@ -37,33 +43,48 @@ function who(u: unknown): string {
   return o.me ? `${name} (me)` : name;
 }
 
+/** The printed form of a mark's outcome. */
+function markRow(m: { marked: number; already_marked: number; failed: number; reason?: string }): Obj {
+  return { marked: m.marked, already_marked: m.already_marked, failed: m.failed, ...(m.reason ? { reason: m.reason } : {}) };
+}
+
+/** "N of M", the size of a list against the whole (specs/cli.md "Reading"). */
+function countOf(n: number, total: unknown): string {
+  return `${n} of ${typeof total === "number" && total >= n ? total : n}`;
+}
+
+function cut(n: number, total: unknown): boolean {
+  return typeof total === "number" && total > n;
+}
+
+const LIMIT_ALL = { type: "int" as const, value: "<n>", desc: "at most this many (default: all)" };
+
 // ---- chats -----------------------------------------------------------------
 
 export const chatsSpec: CommandSpec = {
   name: "chats",
   summary: "Chats with kept content: id, name, type, effective scope",
   positionals: [],
-  flags: { account: ACCOUNT, fields: { type: "string", value: "<list>", desc: "add columns: last_kept, discarded, messages, override" } },
-  examples: ["whatsapp-axi chats", "whatsapp-axi chats --fields last_kept,discarded"],
+  flags: { account: ACCOUNT, limit: LIMIT_ALL, fields: { type: "string", value: "<list>", desc: "add columns: last_kept, discarded, messages, override" } },
+  examples: ["whatsapp-axi chats", "whatsapp-axi chats --limit 10 --fields last_kept,discarded"],
 };
 
 export async function chats(ctx: Ctx, args: string[]): Promise<unknown> {
   const p = parse(chatsSpec, args);
   const fields = parseFields(chatsSpec, p.flags.fields, ["last_kept", "discarded", "messages", "override"]);
+  const limit = listLimit(p.flags.limit);
   const account = chooseAccount(ctx, p.flags.account, "chats");
   const d = ctx.daemon(account);
-  const res = await d.call("GET", "/v1/chats");
+  const res = await d.call("GET", `/v1/chats${q({ limit })}`);
   expect(d, Array.isArray(res.chats), "chats is not a list");
   const list = res.chats as Obj[];
   const af = acctFlag(ctx, account);
   if (list.length === 0) {
     return { chats: "0 chats with kept content", help: [`Run \`whatsapp-axi scope show${af}\` to see what this account keeps`] };
   }
-  return {
-    count: list.length,
-    chats: pick(list, ["id", "name", "type", "scope", ...fields]),
-    help: [`Run \`whatsapp-axi read <chat>${af}\` to read a chat`, `Run \`whatsapp-axi chat view <chat>${af}\` for participants`],
-  };
+  const help = [`Run \`whatsapp-axi read <chat>${af}\` to read a chat`, `Run \`whatsapp-axi chat view <chat>${af}\` for participants`];
+  if (cut(list.length, res.total)) help.unshift(`The limit cut the list: run \`whatsapp-axi chats --limit ${res.total as number}${af}\` to see all ${res.total as number}`);
+  return { count: countOf(list.length, res.total), chats: pick(list, ["id", "name", "type", "scope", ...fields]), help };
 }
 
 // ---- groups ----------------------------------------------------------------
@@ -72,25 +93,24 @@ export const groupsSpec: CommandSpec = {
   name: "groups",
   summary: "Every group the account is a member of, kept content or not: id, name, effective scope, member count",
   positionals: [],
-  flags: { account: ACCOUNT, fields: { type: "string", value: "<list>", desc: "add columns: discarded, override" } },
-  examples: ["whatsapp-axi groups", "whatsapp-axi groups --fields discarded"],
+  flags: { account: ACCOUNT, limit: LIMIT_ALL, fields: { type: "string", value: "<list>", desc: "add columns: discarded, override" } },
+  examples: ["whatsapp-axi groups", "whatsapp-axi groups --limit 20 --fields discarded"],
 };
 
 export async function groups(ctx: Ctx, args: string[]): Promise<unknown> {
   const p = parse(groupsSpec, args);
   const fields = parseFields(groupsSpec, p.flags.fields, ["discarded", "override"]);
+  const limit = listLimit(p.flags.limit);
   const account = chooseAccount(ctx, p.flags.account, "groups");
   const d = ctx.daemon(account);
-  const res = await d.call("GET", "/v1/groups");
+  const res = await d.call("GET", `/v1/groups${q({ limit })}`);
   expect(d, Array.isArray(res.groups), "groups is not a list");
   const list = (res.groups as Obj[]).map((g) => ({ ...g, override: g.override ?? null }));
   const af = acctFlag(ctx, account);
   if (list.length === 0) return { groups: "0 groups: the account is not a member of any group" };
-  return {
-    count: list.length,
-    groups: pick(list, ["id", "name", "scope", "members", ...fields]),
-    help: [`Run \`whatsapp-axi chat view <group>${af}\` for its participants`, `Run \`whatsapp-axi scope set --chat <group> <scope>${af}\` to change what is kept from it`],
-  };
+  const help = [`Run \`whatsapp-axi chat view <group>${af}\` for its participants`, `Run \`whatsapp-axi scope set --chat <group> <scope>${af}\` to change what is kept from it`];
+  if (cut(list.length, res.total)) help.unshift(`The limit cut the list: run \`whatsapp-axi groups --limit ${res.total as number}${af}\` to see all ${res.total as number}`);
+  return { count: countOf(list.length, res.total), groups: pick(list, ["id", "name", "scope", "members", ...fields]), help };
 }
 
 // ---- chat view -------------------------------------------------------------
@@ -201,12 +221,28 @@ export async function events(ctx: Ctx, args: string[], write: (s: string) => voi
 
   if (p.flags.follow) {
     let last = after ?? null;
+    let unmarked = 0;
+    let reason: string | undefined;
     for await (const e of d.stream(`/v1/events${q({ ...query, follow: 1 })}`, signal)) {
+      if (e.error && typeof e.error === "object") {
+        // A mark that failed: said on the stream, and the stream goes on.
+        const m = asMarkOutcome(e.error);
+        unmarked += m?.failed ?? 0;
+        reason = m?.reason ?? reason;
+        write(`${encode({ mark_read_failed: { failed: m?.failed ?? null, marked: m?.marked ?? null, reason: m?.reason ?? null } })}\n`);
+        continue;
+      }
       expect(d, typeof e.seq === "number" && typeof e.kind === "string", "event is missing fields");
       write(`${encode({ events: pick([eventRow(e)], keys) })}\n`);
       last = e.seq as number;
     }
-    return { last_seq: last };
+    const out: Obj = { last_seq: last };
+    const fix = markFailed(unmarked ? { marked: 0, already_marked: 0, failed: unmarked, reason } : undefined, acctFlag(ctx, account), `whatsapp-axi events --after ${after ?? 0} --mark-read${acctFlag(ctx, account)}`);
+    if (fix) {
+      out.mark_read = { failed: unmarked, reason: reason ?? null };
+      out.help = [fix];
+    }
+    return out;
   }
 
   const res = await d.call("GET", `/v1/events${q(query)}`);
@@ -220,11 +256,23 @@ export async function events(ctx: Ctx, args: string[], write: (s: string) => voi
     out.events = after !== undefined ? `0 events after seq ${after}` : "0 events";
   } else {
     if (after === undefined) out.note = `showing the ${plural(list.length, "most recent event")}; pass --after <seq> to read forward`;
+    out.count = countOf(list.length, res.total);
     out.events = pick(list.map(eventRow), keys);
     out.help = [`Run \`whatsapp-axi events --after ${lastSeq}${af}\` for what comes next`, `Run \`whatsapp-axi message view <chat>/<id>${af}\` for a message in full`];
+    if (cut(list.length, res.total)) {
+      const rest = (res.total as number) - list.length;
+      (out.help as string[]).unshift(
+        after !== undefined
+          ? `The limit cut the list: ${rest} more after seq ${lastSeq}; run \`whatsapp-axi events --after ${lastSeq}${af}\` for them`
+          : `The limit cut the list: ${rest} older events; run \`whatsapp-axi events --after 0 --limit ${Math.min(1000, res.total as number)}${af}\` to read from the start`,
+      );
+    }
   }
   if (list.length === 0) out.help = [`Run \`whatsapp-axi events --after ${lastSeq} --follow${af}\` to wait for new events`];
-  if (typeof res.marked_read === "number") out.marked_read = res.marked_read;
+  const mark = asMarkOutcome(res.mark_read);
+  if (mark) out.mark_read = markRow(mark);
+  const fix = markFailed(mark, af, `whatsapp-axi events${after !== undefined ? ` --after ${after}` : ""} --mark-read${af}`);
+  if (fix) out.help = [fix, ...((out.help as string[] | undefined) ?? [])];
   out.last_seq = lastSeq;
   return out;
 }
@@ -269,10 +317,15 @@ export async function read(ctx: Ctx, args: string[]): Promise<unknown> {
     media: m.media ? (m.media as Obj).type : null,
     operator: (m.from as Obj | undefined)?.operator ?? null,
   }));
-  const out: Obj = { chat: chat.id, count: list.length, messages: pick(rows, ["id", "t", "from", "text", ...fields]) };
-  if (typeof res.marked_read === "number") out.marked_read = res.marked_read;
+  const out: Obj = { chat: chat.id, count: countOf(list.length, res.total), messages: pick(rows, ["id", "t", "from", "text", ...fields]) };
+  const mark = asMarkOutcome(res.mark_read);
+  if (mark) out.mark_read = markRow(mark);
   const help = [`Run \`whatsapp-axi message view ${chat.id}/<id>${af}\` for one message in full`];
-  if (res.more) help.unshift(`Run \`whatsapp-axi read ${chat.id} --before ${list[0].id}${af}\` for older messages`);
+  if (res.more || cut(list.length, res.total)) {
+    help.unshift(`The limit cut the list: run \`whatsapp-axi read ${chat.id} --before ${list[0].id}${af}\` for older messages, or raise --limit`);
+  }
+  const fix = markFailed(mark, af, `whatsapp-axi read ${chat.id as string}${p.flags.before ? ` --before ${p.flags.before}` : ""} --mark-read${af}`);
+  if (fix) help.unshift(fix);
   out.help = help;
   return out;
 }

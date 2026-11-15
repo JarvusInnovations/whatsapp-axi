@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/client"
@@ -60,21 +61,32 @@ type DownloadBody struct {
 	ID   string `json:"id"`
 }
 
-// SentMessage is the answer to a send.
+// SendTimeout bounds one send, reaction or file upload, counted from when it is recorded as
+// pending. The daemon carries a send through to this limit whatever happens to the request; the
+// CLI waits at least this long (GET /v1/status reports it as send_timeout_seconds).
+var SendTimeout = 10 * time.Minute
+
+// SentMessage is the answer to a send. Warning is set when WhatsApp accepted the message and only
+// the daemon's own bookkeeping failed afterwards: the message was sent.
 type SentMessage struct {
-	ID    string     `json:"id"`
-	Chat  string     `json:"chat"`
-	T     string     `json:"t"`
-	Media *MediaView `json:"media,omitempty"`
+	ID      string     `json:"id"`
+	Chat    string     `json:"chat"`
+	T       string     `json:"t"`
+	Media   *MediaView `json:"media,omitempty"`
+	Warning string     `json:"warning,omitempty"`
 }
 
-// ReactResult is the answer to a reaction.
+// ReactResult is the answer to a reaction. Warning as for SentMessage.
 type ReactResult struct {
 	Chat    string `json:"chat"`
 	ID      string `json:"id"`
 	Emoji   string `json:"emoji"`
 	Changed bool   `json:"changed"`
+	Warning string `json:"warning,omitempty"`
 }
+
+// bookkeepingWarning is the warning of a send WhatsApp accepted whose recording failed.
+const bookkeepingWarning = "WhatsApp accepted it, but the daemon could not record it in full; see the daemon's log. It may be missing from read and events."
 
 // DownloadResult is the answer to a download.
 type DownloadResult struct {
@@ -378,6 +390,11 @@ func (a *Account) dispatch(ctx context.Context, o *outgoing) (*SentMessage, erro
 	}
 	a.limits.record(now, o.t.chat, o.limitTxt)
 
+	// From here the daemon finishes the send whatever happens to the request: a client that
+	// disconnects or gives up does not cancel it. Only the daemon's own send timeout bounds it.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SendTimeout)
+	defer cancel()
+
 	res, sendErr := a.client.Send(ctx, o.msg)
 
 	// A send to the chat ends the account's typing there; this runs after a.mu is released.
@@ -389,6 +406,11 @@ func (a *Account) dispatch(ctx context.Context, o *outgoing) (*SentMessage, erro
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if sendErr != nil {
+		if errors.Is(sendErr, client.ErrOutcomeUnknown) || ctx.Err() != nil {
+			// It may have gone out: the row stays pending until the outcome is learned.
+			a.log.Warn("a send's outcome is unknown", "err", sendErr)
+			return nil, OutcomeUnknown("Sending")
+		}
 		if _, err := a.db.ExecContext(ctx, `UPDATE messages SET status=? WHERE chat_id=? AND id=?`, StatusFailed, o.t.chat, id); err != nil {
 			a.log.Error("marking a send failed", "err", err)
 		}
@@ -405,24 +427,28 @@ func (a *Account) dispatch(ctx context.Context, o *outgoing) (*SentMessage, erro
 	if res.Media != nil {
 		o.row.keys = res.Media.Keys
 	}
-	ev, err := a.markSent(ctx, o.row)
-	if err != nil {
-		return nil, err
-	}
 	chat := o.t.chat
-	// WhatsApp answers a phone-number send with the hidden id: rekey the chat to it.
-	if addressed := identity.NonAD(res.Chat); addressed != "" && addressed != chat && identity.IsPN(chat) && identity.IsLID(addressed) {
-		if err := a.rekey(ctx, chat, addressed); err != nil {
-			a.log.Error("rekeying after a send failed", "err", err)
-		} else {
-			chat = addressed
-		}
-	}
-	a.afterCommit(ctx, []pending{ev})
-	out := &SentMessage{ID: id, Chat: firstNonEmpty(identity.NonAD(res.Chat), chat), T: rfc3339(sentAt)}
+	out := &SentMessage{ID: id, T: rfc3339(sentAt)}
 	if o.row.media != nil {
 		out.Media = o.row.media
 	}
+	// WhatsApp accepted it, so it was sent: a failure from here on is a warning, never an error.
+	ev, err := a.markSent(ctx, o.row)
+	if err != nil {
+		a.log.Error("recording a sent message failed", "err", err)
+		out.Warning = bookkeepingWarning
+	} else {
+		// WhatsApp answers a phone-number send with the hidden id: rekey the chat to it.
+		if addressed := identity.NonAD(res.Chat); addressed != "" && addressed != chat && identity.IsPN(chat) && identity.IsLID(addressed) {
+			if err := a.rekey(ctx, chat, addressed); err != nil {
+				a.log.Error("rekeying after a send failed", "err", err)
+			} else {
+				chat = addressed
+			}
+		}
+		a.afterCommit(ctx, []pending{ev})
+	}
+	out.Chat = firstNonEmpty(identity.NonAD(res.Chat), chat)
 	return out, nil
 }
 
@@ -515,36 +541,52 @@ func (a *Account) React(ctx context.Context, b ReactBody) (*ReactResult, error) 
 		sender = ""
 	}
 	a.limits.record(now, chat, "")
+	// As for a send: once it is going out, the request no longer controls it.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SendTimeout)
+	defer cancel()
 	if _, err := a.client.React(ctx, chat, sender, b.ID, emoji); err != nil {
+		if errors.Is(err, client.ErrOutcomeUnknown) || ctx.Err() != nil {
+			a.log.Warn("a reaction's outcome is unknown", "err", err)
+			return nil, OutcomeUnknown("Reacting")
+		}
 		return nil, a.clientErr(err, "Reacting")
 	}
 	res.Changed = true
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	tx, err := a.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM reactions WHERE chat_id=? AND message_id=? AND sender_id IN (?, ?, ?)`, chat, b.ID, own.UserID(), own.LID, own.PN); err != nil {
-		return nil, err
-	}
-	if emoji != "" {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO reactions(chat_id, message_id, sender_id, emoji, ts) VALUES(?, ?, ?, ?, ?)`, chat, b.ID, own.UserID(), emoji, ms(now)); err != nil {
-			return nil, err
-		}
-	}
 	me := User{ID: own.UserID(), LID: own.LID, PN: identity.PhoneOf(own.PN), Me: true, Operator: identity.IsOperator(own.LID, own.PN, a.settings.Operators)}
-	ev, err := a.insertEvent(ctx, tx, KindReaction, chat, b.ID, true, Event{Target: b.ID, From: &me, Emoji: &emoji})
+	ev, err := a.recordReaction(ctx, chat, b.ID, emoji, own, me, now)
 	if err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
+		// WhatsApp took the reaction: it was made. Only the record is missing.
+		a.log.Error("recording a reaction failed", "err", err)
+		res.Warning = bookkeepingWarning
+		return res, nil
 	}
 	a.afterCommit(ctx, []pending{ev})
 	return res, nil
+}
+
+// recordReaction stores the account's own reaction and its event. The caller holds a.mu.
+func (a *Account) recordReaction(ctx context.Context, chat, id, emoji string, own identity.Own, me User, now time.Time) (pending, error) {
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return pending{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM reactions WHERE chat_id=? AND message_id=? AND sender_id IN (?, ?, ?)`, chat, id, own.UserID(), own.LID, own.PN); err != nil {
+		return pending{}, err
+	}
+	if emoji != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO reactions(chat_id, message_id, sender_id, emoji, ts) VALUES(?, ?, ?, ?, ?)`, chat, id, own.UserID(), emoji, ms(now)); err != nil {
+			return pending{}, err
+		}
+	}
+	ev, err := a.insertEvent(ctx, tx, KindReaction, chat, id, true, Event{Target: id, From: &me, Emoji: &emoji})
+	if err != nil {
+		return pending{}, err
+	}
+	return ev, tx.Commit()
 }
 
 // Download fetches a kept message's media into media/ (POST /v1/download). Downloads do not count

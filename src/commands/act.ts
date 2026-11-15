@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { parse, type CommandSpec } from "../args.js";
 import { expect } from "../client.js";
 import { usage } from "../errors.js";
-import { chooseAccount, type Ctx } from "../context.js";
+import { asMarkOutcome, chooseAccount, markFailed, type Ctx } from "../context.js";
 import { acctFlag, splitRef } from "./read.js";
 
 type Obj = Record<string, unknown>;
@@ -26,6 +26,7 @@ function sentOut(d: { account: string }, res: Obj, af: string, extra: Obj = {}):
   expect(d as never, typeof res.id === "string" && typeof res.chat === "string", "send answer is missing fields");
   return {
     sent: { id: res.id, chat: res.chat, t: res.t ?? null, ...extra },
+    ...(typeof res.warning === "string" && res.warning ? { warning: res.warning } : {}),
     help: [`Run \`whatsapp-axi read ${res.chat as string}${af}\` to see the chat`, `Run \`whatsapp-axi events --follow${af}\` to wait for replies`],
   };
 }
@@ -64,7 +65,7 @@ export async function send(ctx: Ctx, args: string[], stdin: () => string = () =>
   if (reply) body.reply_to = reply;
   if (p.flags.mention) body.mentions = p.flags.mention;
   if (p.flags["first-contact"]) body.first_contact = true;
-  const res = await d.call("POST", "/v1/send", body);
+  const res = await d.send("/v1/send", body, chat);
   return sentOut(d, res, acctFlag(ctx, account));
 }
 
@@ -101,7 +102,7 @@ export async function sendFile(ctx: Ctx, args: string[]): Promise<unknown> {
   if (p.flags.as !== undefined) body.as = p.flags.as;
   if (reply) body.reply_to = reply;
   if (p.flags["first-contact"]) body.first_contact = true;
-  const res = await d.call("POST", "/v1/send-file", body);
+  const res = await d.send("/v1/send-file", body, chat);
   const media = (res.media ?? {}) as Obj;
   return sentOut(d, res, acctFlag(ctx, account), { type: media.type ?? null, mime: media.mime ?? null });
 }
@@ -131,11 +132,12 @@ export async function react(ctx: Ctx, args: string[]): Promise<unknown> {
   const d = ctx.daemon(account);
   const body: Obj = { id, emoji: remove ? "" : emojiArg };
   if (chat) body.chat = chat;
-  const res = await d.call("POST", "/v1/react", body);
+  const res = await d.send("/v1/react", body, chat || undefined);
   expect(d, typeof res.changed === "boolean" && typeof res.chat === "string", "react answer is missing fields");
   const target = `${res.chat as string}/${id}`;
-  if (remove) return { reaction: res.changed ? `removed from ${target}` : `none on ${target} (no-op)` };
-  return { reaction: res.changed ? `${emojiArg} on ${target}` : `${emojiArg} already on ${target} (no-op)` };
+  const warning = typeof res.warning === "string" && res.warning ? { warning: res.warning } : {};
+  if (remove) return { reaction: res.changed ? `removed from ${target}` : `none on ${target} (no-op)`, ...warning };
+  return { reaction: res.changed ? `${emojiArg} on ${target}` : `${emojiArg} already on ${target} (no-op)`, ...warning };
 }
 
 // ---- download --------------------------------------------------------------
@@ -195,13 +197,22 @@ export async function markRead(ctx: Ctx, args: string[]): Promise<unknown> {
     body.through = last.id;
   }
   const res = await d.call("POST", "/v1/mark-read", body);
-  expect(d, typeof res.chat === "string" && typeof res.marked === "number", "mark-read answer is missing fields");
-  if (res.read_receipts === "off") {
-    return { marked: "read_receipts is off; no read receipt sent (no-op)", help: [`Run \`whatsapp-axi settings set read_receipts on-read${acctFlag(ctx, account)}\` to send them`] };
+  const m = asMarkOutcome(res);
+  expect(d, typeof res.chat === "string" && m, "mark-read answer is missing fields");
+  const af = acctFlag(ctx, account);
+  const retry = `whatsapp-axi mark-read ${ref !== undefined ? ref : `--chat ${chatFlag}`}${af}`;
+  const fix = markFailed(m, af, retry);
+  if (fix) {
+    // Asked for and not sent: never reported as done. A partial mark says how many went out.
+    const what = m.marked ? `${m.marked} marked read, ${m.failed} not marked` : `${m.failed} not marked`;
+    return {
+      marked: { chat: res.chat, read: m.marked, already_marked: m.already_marked, failed: m.failed, reason: m.reason ?? null },
+      error: `${what} (${m.reason ?? "unknown"})`,
+      help: [fix],
+    };
   }
-  const already = typeof res.already_marked === "number" ? res.already_marked : 0;
-  if (res.marked === 0) return { marked: `nothing new in ${res.chat as string}${already ? `; ${already} already marked read` : ""} (no-op)` };
-  return { marked: { chat: res.chat, read: res.marked, already_marked: already } };
+  if (m.marked === 0) return { marked: `nothing new in ${res.chat as string}${m.already_marked ? `; ${m.already_marked} already marked read` : ""} (no-op)` };
+  return { marked: { chat: res.chat, read: m.marked, already_marked: m.already_marked, failed: 0 } };
 }
 
 // ---- typing ----------------------------------------------------------------

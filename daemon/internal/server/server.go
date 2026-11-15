@@ -255,30 +255,41 @@ func (s *Server) patchSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
-	if _, err := query(r); err != nil {
-		s.fail(w, err)
-		return
+// listLimit reads the optional limit of a list; absent is 0, every row.
+func listLimit(r *http.Request) (int, error) {
+	q, err := query(r, "limit")
+	if err != nil {
+		return 0, err
 	}
-	list, err := s.acct.Chats(r.Context())
+	return intParam(q, "limit", 0, 1, 10000)
+}
+
+func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
+	limit, err := listLimit(r)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"chats": list})
+	list, total, err := s.acct.Chats(r.Context(), limit)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"chats": list, "total": total})
 }
 
 func (s *Server) groups(w http.ResponseWriter, r *http.Request) {
-	if _, err := query(r); err != nil {
-		s.fail(w, err)
-		return
-	}
-	list, err := s.acct.Groups(r.Context())
+	limit, err := listLimit(r)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"groups": list})
+	list, total, err := s.acct.Groups(r.Context(), limit)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"groups": list, "total": total})
 }
 
 func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
@@ -320,8 +331,8 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if mark {
-		n := s.acct.MarkReturned(r.Context(), core.PageRefs(page))
-		page.MarkedRead = &n
+		m := s.acct.MarkReturned(r.Context(), core.PageRefs(page))
+		page.MarkRead = &m
 	}
 	writeJSON(w, http.StatusOK, page)
 }
@@ -434,9 +445,14 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, err)
 			return
 		}
-		res := map[string]any{"events": list, "latest_seq": last}
+		total, err := s.acct.EventsTotal(ctx, eq)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		res := map[string]any{"events": list, "latest_seq": last, "total": total}
 		if mark {
-			res["marked_read"] = s.acct.MarkReturned(ctx, core.EventRefs(list))
+			res["mark_read"] = s.acct.MarkReturned(ctx, core.EventRefs(list))
 		}
 		if eq.After != nil {
 			res["after"] = *eq.After
@@ -482,7 +498,13 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			cursor = e.Seq
 		}
 		if mark {
-			s.acct.MarkReturned(ctx, core.EventRefs(list))
+			// A mark that fails is said on the stream, and the stream goes on.
+			if m := s.acct.MarkReturned(ctx, core.EventRefs(list)); m.Failed > 0 {
+				b, _ := json.Marshal(map[string]any{"error": core.MarkFailedLine(m)})
+				if _, err := w.Write(append(b, '\n')); err != nil {
+					return
+				}
+			}
 		}
 		if flusher != nil {
 			flusher.Flush()

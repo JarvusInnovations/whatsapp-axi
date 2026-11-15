@@ -35,7 +35,11 @@ type Client struct {
 	contacts map[string]string // id -> address-book name
 	groups   map[string]client.GroupInfo
 
-	MarkReads   []MarkReadCall
+	MarkReads []MarkReadCall
+	// MarkReadErr, when set, is asked for each MarkRead; a non-nil error fails that receipt.
+	MarkReadErr func(chat, sender string) error
+	// TypingErr, when set, fails every SendTyping.
+	TypingErr   error
 	typing      []TypingCall
 	Requested   []string // ids passed to RequestMapping
 	Closed      bool
@@ -61,6 +65,9 @@ type Client struct {
 	MaxInFlight int
 	// BeforeSend, when set, runs inside Send before it returns (to look at the store mid-send).
 	BeforeSend func(client.OutMessage)
+	// SendWait, when set, holds every Send and React until it is closed or the context ends
+	// (then the context's error is returned, as the library does).
+	SendWait chan struct{}
 	// SendErr, when set, fails every Send and React.
 	SendErr error
 	// AddressAs, when set, is the chat id WhatsApp answers with (a phone-number send answered
@@ -237,6 +244,11 @@ func (c *Client) MarkRead(_ context.Context, chat, sender string, ids []string, 
 	if c.state != "connected" {
 		return client.ErrNotConnected
 	}
+	if c.MarkReadErr != nil {
+		if err := c.MarkReadErr(chat, sender); err != nil {
+			return err
+		}
+	}
 	c.MarkReads = append(c.MarkReads, MarkReadCall{Chat: chat, Sender: sender, IDs: append([]string(nil), ids...)})
 	return nil
 }
@@ -247,8 +259,25 @@ func (c *Client) SendTyping(_ context.Context, chat string, on bool) error {
 	if c.state != "connected" {
 		return client.ErrNotConnected
 	}
+	if c.TypingErr != nil {
+		return c.TypingErr
+	}
 	c.typing = append(c.typing, TypingCall{Chat: chat, On: on})
 	return nil
+}
+
+// SetMarkReadErr sets MarkReadErr under the lock.
+func (c *Client) SetMarkReadErr(f func(chat, sender string) error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.MarkReadErr = f
+}
+
+// SetTypingErr sets TypingErr under the lock.
+func (c *Client) SetTypingErr(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.TypingErr = err
 }
 
 // Typing returns the SendTyping calls so far.
@@ -371,13 +400,46 @@ func (c *Client) leave() {
 	c.mu.Unlock()
 }
 
-func (c *Client) Send(_ context.Context, m client.OutMessage) (client.SendResult, error) {
+// wait holds a send while SendWait is open.
+func (c *Client) wait(ctx context.Context) error {
+	c.mu.Lock()
+	w := c.SendWait
+	c.mu.Unlock()
+	if w == nil {
+		return nil
+	}
+	select {
+	case <-w:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// SetSendWait sets SendWait under the lock.
+func (c *Client) SetSendWait(w chan struct{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.SendWait = w
+}
+
+// SetSendErr sets SendErr under the lock.
+func (c *Client) SetSendErr(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.SendErr = err
+}
+
+func (c *Client) Send(ctx context.Context, m client.OutMessage) (client.SendResult, error) {
 	if err := c.enter(); err != nil {
 		return client.SendResult{}, err
 	}
 	defer c.leave()
 	if c.BeforeSend != nil {
 		c.BeforeSend(m)
+	}
+	if err := c.wait(ctx); err != nil {
+		return client.SendResult{}, err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -415,11 +477,14 @@ func (c *Client) Sent() []client.OutMessage {
 	return append([]client.OutMessage(nil), c.sent...)
 }
 
-func (c *Client) React(_ context.Context, chat, sender, id, emoji string) (client.SendResult, error) {
+func (c *Client) React(ctx context.Context, chat, sender, id, emoji string) (client.SendResult, error) {
 	if err := c.enter(); err != nil {
 		return client.SendResult{}, err
 	}
 	defer c.leave()
+	if err := c.wait(ctx); err != nil {
+		return client.SendResult{}, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.SendErr != nil {

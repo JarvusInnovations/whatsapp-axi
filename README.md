@@ -2,10 +2,11 @@
 
 Agent-ergonomic CLI and local daemon for WhatsApp accounts.
 
-**Status: early. The specs are written and the build is starting; nothing here is usable yet.** The repository
-currently holds the specs, the plans, a build skeleton for both halves and the research notes behind the specs.
+**Status: works from a source checkout on Linux; not yet published to npm.** The daemon and the CLI
+are built and in a pilot with one account. There is no release package yet, so install from source
+(below). macOS service management comes later; `daemon run` works there in the foreground.
 
-## What it will be
+## What it is
 
 - A small **daemon per WhatsApp account**, written in Go on
   [whatsmeow](https://github.com/tulir/whatsmeow), that holds the account's linked-device
@@ -31,6 +32,66 @@ most 48 hours) so that a message someone replies to with a mention can be kept w
 never written to disk, and are gone when the daemon stops. See [`specs/scopes.md`](specs/scopes.md).
 
 How each of these works is decided in [`specs/`](specs/), not here.
+
+## Install from source
+
+You need Node 22 and Go (versions in `.tool-versions`), and Linux with systemd user services for
+the `daemon install` service commands.
+
+```sh
+git clone https://github.com/JarvusInnovations/whatsapp-axi.git
+cd whatsapp-axi
+npm ci && npm run build      # the CLI, in dist/
+npm run build:daemon         # the daemon, in daemon/bin/whatsapp-axid
+npm link                     # puts whatsapp-axi on PATH (or run node dist/bin/whatsapp-axi.js)
+```
+
+The CLI finds the daemon binary built in its checkout. `daemon install` copies it to a stable path
+and runs it as a systemd user service; it asks for lingering (`loginctl enable-linger <user>`) so
+the service survives logout.
+
+## Usage
+
+The ids below are invented.
+
+```sh
+whatsapp-axi account add example                 # create the account's files (scope: tagged)
+whatsapp-axi daemon install example              # install and start its daemon as a service
+whatsapp-axi auth link --phone +15550100001      # prints a pairing code to type on the phone
+whatsapp-axi operators add +15550100002          # whose direct messages are kept
+whatsapp-axi                                     # home view: accounts, state, scope
+```
+
+Read and act:
+
+```sh
+whatsapp-axi events --after 0 --limit 20         # what was kept; the last line is the next --after
+whatsapp-axi events --after 412 --follow         # stream new events
+whatsapp-axi read 120363000000000001@g.us --mark-read
+whatsapp-axi send 120363000000000001@g.us "On it" --reply 3EB0AAAA0000000001
+whatsapp-axi send +15550100003 "Hello" --first-contact
+```
+
+Scopes decide what is kept: `tagged` (default; in groups, only what mentions or replies to the
+account), `dm-only` or `full`, per account and per chat. Widening needs `--confirm`.
+
+```sh
+whatsapp-axi scope show
+whatsapp-axi scope set --chat 120363000000000001@g.us full --confirm
+whatsapp-axi scope set --chat 120363000000000002@g.us none
+```
+
+Every command prints [TOON](https://toonformat.dev/). For scripts, `--json-out[=path]` also writes
+the daemon's complete response as JSON to an owner-only file and prints where:
+
+```sh
+whatsapp-axi events --after 0 --json-out=/tmp/events.json
+jq '.events[]' /tmp/events.json
+```
+
+`whatsapp-axi --help` lists every command, and `<command> --help` shows its flags. For agents,
+`whatsapp-axi setup hooks` installs a session-start hook, and
+[`skills/whatsapp-axi/`](skills/whatsapp-axi/SKILL.md) is an installable skill.
 
 ## Unofficial client: read this first
 

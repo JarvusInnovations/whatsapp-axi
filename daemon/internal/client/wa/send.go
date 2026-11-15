@@ -132,9 +132,19 @@ func (c *Client) Send(ctx context.Context, m client.OutMessage) (client.SendResu
 	}
 	resp, err := wa.SendMessage(ctx, to, BuildMessage(m, up), whatsmeow.SendRequestExtra{ID: types.MessageID(m.ID)})
 	if err != nil {
-		return client.SendResult{}, err
+		return client.SendResult{}, sendErr(err)
 	}
 	return client.SendResult{Chat: nonADString(resp.Chat), Sender: nonADString(resp.Sender), Time: resp.Timestamp, Media: media}, nil
+}
+
+// sendErr marks the errors after which a message may have gone out: no answer to it in time, or
+// the wait cut short. Everything else means WhatsApp did not take it.
+func sendErr(err error) error {
+	if errors.Is(err, whatsmeow.ErrMessageTimedOut) || errors.Is(err, whatsmeow.ErrIQTimedOut) ||
+		errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return fmt.Errorf("%w: %w", client.ErrOutcomeUnknown, err)
+	}
+	return err
 }
 
 func nonADString(j types.JID) string {
@@ -161,7 +171,7 @@ func (c *Client) React(ctx context.Context, chat, sender, id, emoji string) (cli
 	}
 	resp, err := wa.SendMessage(ctx, cj, wa.BuildReaction(cj, sj, types.MessageID(id), emoji))
 	if err != nil {
-		return client.SendResult{}, err
+		return client.SendResult{}, sendErr(err)
 	}
 	return client.SendResult{Chat: nonADString(resp.Chat), Sender: nonADString(resp.Sender), Time: resp.Timestamp}, nil
 }

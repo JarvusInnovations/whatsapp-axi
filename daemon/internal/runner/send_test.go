@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,6 +22,7 @@ import (
 	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/client"
 	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/client/fake"
 	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/core"
+	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/sqlite"
 )
 
 func (d *daemon) post(path string, body any) (int, map[string]any) {
@@ -442,7 +445,7 @@ func TestSendLimitsAtTheSocket(t *testing.T) {
 			t.Fatal("the old id must still resolve to the rekeyed chat")
 		}
 		// send.first_contact allow.
-		d.patch(`{"send":{"first_contact":"allow"}}`)
+		d.patch(`{"send":{"first_contact":"allow"},"confirm":true}`)
 		d.send(map[string]any{"chat": "+15550100008", "text": "hi"})
 	})
 
@@ -477,7 +480,7 @@ func TestSendLimitsAtTheSocket(t *testing.T) {
 		e := newEnv(t)
 		e.init()
 		d := e.start(startOpts{})
-		d.patch(`{"send":{"same_text_chats":2,"first_contact":"allow"}}`)
+		d.patch(`{"send":{"same_text_chats":2,"first_contact":"allow"},"confirm":true}`)
 		d.send(map[string]any{"chat": "+15550100001", "text": "Buy now"})
 		d.send(map[string]any{"chat": "+15550100002", "text": "  Buy now\n"}) // compared after trimming
 		d.send(map[string]any{"chat": "+15550100001", "text": "Buy now"})     // the same chat again is fine
@@ -538,3 +541,167 @@ func TestSentContentNeverLogged(t *testing.T) {
 }
 
 var _ = fake.New
+
+// storeTrigger adds a trigger to store.db through a second connection, to make the daemon's own
+// bookkeeping fail at a chosen point.
+func (d *daemon) storeTrigger(sql string) {
+	d.t.Helper()
+	db, err := sqlite.Open(context.Background(), d.env.layout().StoreDB(), false)
+	if err != nil {
+		d.t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(sql); err != nil {
+		d.t.Fatal(err)
+	}
+}
+
+// TestSendFinishesWhenTheClientDisconnects: once a send is recorded pending, the daemon carries
+// it through even though the client gave up (specs/sending.md "Sending text").
+func TestSendFinishesWhenTheClientDisconnects(t *testing.T) {
+	d, _ := keptGroup(t)
+	entered := make(chan string, 1)
+	release := make(chan struct{})
+	d.fake.BeforeSend = func(m client.OutMessage) {
+		entered <- m.ID
+		<-release
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	js, _ := json.Marshal(map[string]any{"chat": group, "text": "carried through"})
+	req, _ := http.NewRequestWithContext(ctx, "POST", "http://x/v1/send", bytes.NewReader(js))
+	errc := make(chan error, 1)
+	go func() {
+		resp, err := d.http.Do(req)
+		if err == nil {
+			resp.Body.Close()
+		}
+		errc <- err
+	}()
+	id := <-entered
+	cancel()
+	if err := <-errc; err == nil {
+		t.Fatal("the request was not cut off")
+	}
+	if m := d.message(group, id); m.Status != "pending" {
+		t.Fatalf("mid-send: %+v", m)
+	}
+	close(release)
+	waitFor(t, func() bool { return d.message(group, id).Status == "" })
+	if sent := d.fake.Sent(); len(sent) != 1 || sent[0].ID != id {
+		t.Fatalf("sent %+v", sent)
+	}
+	found := false
+	for _, e := range d.events("?after=0") {
+		found = found || (e.Message != nil && e.Message.ID == id)
+	}
+	if !found {
+		t.Fatal("the sent message has no event")
+	}
+}
+
+// TestSendOutcomeUnknown: a send the daemon cannot settle is outcome_unknown, never a plain
+// failure, and its row stays pending.
+func TestSendOutcomeUnknown(t *testing.T) {
+	t.Run("the daemon's send timeout", func(t *testing.T) {
+		d, parent := keptGroup(t)
+		old := core.SendTimeout
+		core.SendTimeout = 100 * time.Millisecond
+		defer func() { core.SendTimeout = old }()
+		d.fake.SetSendWait(make(chan struct{}))
+		e := d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "slow"}, 504, "outcome_unknown")
+		if !strings.Contains(e["message"].(string), "may have gone out") {
+			t.Fatalf("%v", e)
+		}
+		msgs := d.messages(group)
+		if last := msgs[len(msgs)-1]; last.Text != "slow" || last.Status != "pending" {
+			t.Fatalf("row %+v", last)
+		}
+		d.wantError("POST", "/v1/react", map[string]any{"chat": group, "id": parent.ID, "emoji": "👍"}, 504, "outcome_unknown")
+	})
+	t.Run("the client cannot tell", func(t *testing.T) {
+		d, _ := keptGroup(t)
+		d.fake.SetSendErr(fmt.Errorf("%w: timed out", client.ErrOutcomeUnknown))
+		d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "unsure"}, 504, "outcome_unknown")
+		msgs := d.messages(group)
+		if last := msgs[len(msgs)-1]; last.Status != "pending" {
+			t.Fatalf("row %+v", last)
+		}
+		// A refusal is still a plain failure, and the row is failed.
+		d.fake.SetSendErr(fmt.Errorf("refused"))
+		d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "refused"}, 502, "whatsapp_error")
+	})
+}
+
+// TestAcceptedMeansSent: when WhatsApp accepted and only the daemon's bookkeeping failed, the
+// answer is success with a warning.
+func TestAcceptedMeansSent(t *testing.T) {
+	t.Run("send", func(t *testing.T) {
+		d, _ := keptGroup(t)
+		d.storeTrigger(`CREATE TRIGGER fail_sent BEFORE UPDATE OF status ON messages WHEN NEW.status = 'sent' BEGIN SELECT RAISE(FAIL, 'test'); END`)
+		code, out := d.do("POST", "/v1/send", map[string]any{"chat": group, "text": "accepted"})
+		var s core.SentMessage
+		_ = json.Unmarshal(out, &s)
+		if code != 200 || s.ID == "" || s.Warning == "" {
+			t.Fatalf("%d %s", code, out)
+		}
+		if len(d.fake.Sent()) != 1 {
+			t.Fatal("not sent")
+		}
+	})
+	t.Run("reaction", func(t *testing.T) {
+		d, parent := keptGroup(t)
+		d.storeTrigger(`CREATE TRIGGER fail_reaction BEFORE INSERT ON reactions BEGIN SELECT RAISE(FAIL, 'test'); END`)
+		code, out := d.do("POST", "/v1/react", map[string]any{"chat": group, "id": parent.ID, "emoji": "👍"})
+		var r core.ReactResult
+		_ = json.Unmarshal(out, &r)
+		if code != 200 || !r.Changed || r.Warning == "" {
+			t.Fatalf("%d %s", code, out)
+		}
+		if len(d.fake.Reactions()) != 1 {
+			t.Fatal("not sent")
+		}
+	})
+}
+
+func TestStatusReportsTheSendTimeout(t *testing.T) {
+	d, _ := keptGroup(t)
+	var st core.Status
+	d.get("/v1/status", &st)
+	if st.SendTimeoutSeconds != int(core.SendTimeout/time.Second) || st.SendTimeoutSeconds < 60 {
+		t.Fatalf("%d", st.SendTimeoutSeconds)
+	}
+}
+
+// TestForgetFailsWhenMediaStays: forget never reports forgotten while a downloaded file of it is
+// still on disk; nothing is forgotten, so it can be run again.
+func TestForgetFailsWhenMediaStays(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	d, _ := keptGroup(t)
+	keys := []byte(`{"direct_path":"/v/x"}`)
+	m := d.emit(msg("@Example doc", mention, func(mm *client.Message) {
+		mm.Media = &client.Media{Type: "document", MIME: "application/pdf", Name: "a.pdf", Size: 4, Keys: keys}
+	}))
+	d.fake.Files = map[string][]byte{string(keys): []byte("%PDF")}
+	var r core.DownloadResult
+	_, out := d.do("POST", "/v1/download", map[string]any{"chat": group, "id": m.ID})
+	json.Unmarshal(out, &r)
+	media := d.env.layout().MediaDir()
+	os.Chmod(media, 0o500)
+	defer os.Chmod(media, 0o700)
+	e := d.wantError("POST", "/v1/forget", map[string]string{"chat": group, "id": m.ID}, 500, "internal")
+	if !strings.Contains(e["message"].(string), "Nothing was forgotten") || strings.Contains(e["message"].(string), media) {
+		t.Fatalf("%v", e)
+	}
+	if !d.kept(group, m.ID) {
+		t.Fatal("forgotten although its file stayed")
+	}
+	os.Chmod(media, 0o700)
+	if code, out := d.do("POST", "/v1/forget", map[string]string{"chat": group, "id": m.ID}); code != 200 {
+		t.Fatalf("%d %s", code, out)
+	}
+	if _, err := os.Stat(r.Path); !os.IsNotExist(err) || d.kept(group, m.ID) {
+		t.Fatal("not forgotten on the second run")
+	}
+}

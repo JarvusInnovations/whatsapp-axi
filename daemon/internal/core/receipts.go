@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -23,17 +24,35 @@ type MsgRef struct {
 	ID   string
 }
 
-// markLocked sends read receipts for the incoming messages among refs that have not been marked,
-// and records them as marked. It returns how many it marked now and how many were marked before.
-// Messages from the account itself, and refs that are not kept, are skipped. The caller holds
-// a.mu and has checked read_receipts.
-func (a *Account) markLocked(ctx context.Context, refs []MsgRef) (marked, already int, err error) {
-	type group struct {
-		chat, receiptChat, sender string
-		ids                       []string
-	}
-	var order []string
-	groups := map[string]*group{}
+// Why a mark was not sent (specs/daemon.md "Receipts and typing").
+const (
+	MarkReasonOff          = "off"           // read_receipts is off
+	MarkReasonNotConnected = "not_connected" // no live connection to WhatsApp
+	MarkReasonWhatsApp     = "whatsapp_error"
+	MarkReasonInternal     = "internal" // the store could not be read; see the daemon's log
+)
+
+// MarkOutcome is what a mark did: how many incoming messages were marked now, how many had been
+// marked before, and how many were asked for and not marked, with the reason. A mark that was
+// asked for and not sent is never reported as done.
+type MarkOutcome struct {
+	Marked        int    `json:"marked"`
+	AlreadyMarked int    `json:"already_marked"`
+	Failed        int    `json:"failed"`
+	Reason        string `json:"reason,omitempty"`
+}
+
+// markGroup is the messages of one sender in one chat: one read receipt.
+type markGroup struct {
+	chat, receiptChat, sender string
+	ids                       []string
+}
+
+// markTargets finds, among refs, the incoming kept messages not yet marked, grouped per receipt,
+// and counts those marked before. Messages from the account itself, and refs that are not kept,
+// are skipped. The caller holds a.mu.
+func (a *Account) markTargets(ctx context.Context, refs []MsgRef) (groups []*markGroup, already int, err error) {
+	byKey := map[string]*markGroup{}
 	seen := map[MsgRef]bool{}
 	for _, r := range refs {
 		if seen[r] {
@@ -46,7 +65,7 @@ func (a *Account) markLocked(ctx context.Context, refs []MsgRef) (marked, alread
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		} else if err != nil {
-			return marked, already, err
+			return nil, already, err
 		}
 		if fromMe {
 			continue
@@ -62,28 +81,62 @@ func (a *Account) markLocked(ctx context.Context, refs []MsgRef) (marked, alread
 			receiptChat = identity.NonAD(senderRaw)
 		}
 		key := r.Chat + "\x00" + receiptChat + "\x00" + senderRaw
-		g, ok := groups[key]
+		g, ok := byKey[key]
 		if !ok {
-			g = &group{chat: r.Chat, receiptChat: receiptChat, sender: senderRaw}
-			groups[key] = g
-			order = append(order, key)
+			g = &markGroup{chat: r.Chat, receiptChat: receiptChat, sender: senderRaw}
+			byKey[key] = g
+			groups = append(groups, g)
 		}
 		g.ids = append(g.ids, r.ID)
 	}
+	return groups, already, nil
+}
+
+// markLocked sends read receipts for the incoming messages among refs that have not been marked,
+// and records them as marked. Under read_receipts off it sends nothing and counts every unmarked
+// message as failed with reason off. A receipt that fails does not stop the others, unless the
+// connection is gone. The error is a store failure only; WhatsApp's own refusals are in the
+// outcome. The caller holds a.mu.
+func (a *Account) markLocked(ctx context.Context, refs []MsgRef) (MarkOutcome, error) {
+	var out MarkOutcome
+	groups, already, err := a.markTargets(ctx, refs)
+	out.AlreadyMarked = already
+	if err != nil {
+		return out, err
+	}
+	if a.settings.ReadReceipts == "off" {
+		for _, g := range groups {
+			out.Failed += len(g.ids)
+		}
+		if out.Failed > 0 {
+			out.Reason = MarkReasonOff
+		}
+		return out, nil
+	}
 	now := a.now()
-	for _, key := range order {
-		g := groups[key]
+	for i, g := range groups {
 		if err := a.client.MarkRead(ctx, g.receiptChat, g.sender, g.ids, now); err != nil {
-			return marked, already, err
+			if errors.Is(err, client.ErrNotConnected) {
+				for _, rest := range groups[i:] {
+					out.Failed += len(rest.ids)
+				}
+				out.Reason = MarkReasonNotConnected
+				return out, nil
+			}
+			a.log.Warn("WhatsApp refused or failed a read receipt", "err", err)
+			out.Failed += len(g.ids)
+			out.Reason = MarkReasonWhatsApp
+			continue
 		}
 		for _, id := range g.ids {
 			if _, err := a.db.ExecContext(ctx, `UPDATE messages SET read_marked=1 WHERE chat_id=? AND id=?`, g.chat, id); err != nil {
-				return marked, already, err
+				// The receipt went out; only recording it failed, so it counts as marked.
+				a.log.Error("recording a read receipt failed", "err", err)
 			}
 		}
-		marked += len(g.ids)
+		out.Marked += len(g.ids)
 	}
-	return marked, already, nil
+	return out, nil
 }
 
 // markOnKeep marks newly kept messages read when read_receipts is on-keep. The caller holds a.mu.
@@ -97,25 +150,42 @@ func (a *Account) markOnKeep(ctx context.Context, rows []row) {
 			refs = append(refs, MsgRef{Chat: r.chat, ID: r.id})
 		}
 	}
-	if _, _, err := a.markLocked(ctx, refs); err != nil && !errors.Is(err, client.ErrNotConnected) {
+	out, err := a.markLocked(ctx, refs)
+	if err != nil {
 		a.log.Warn("marking a kept message read failed", "err", err)
+	} else if out.Failed > 0 && out.Reason != MarkReasonNotConnected {
+		a.log.Warn("marking a kept message read failed", "failed", out.Failed, "reason", out.Reason)
 	}
 }
 
 // MarkReturned marks read the incoming messages a read request returned, for a request with
-// mark_read. The read itself never fails because of it: offline, the messages stay unmarked for a
-// later mark. It returns how many were marked now.
-func (a *Account) MarkReturned(ctx context.Context, refs []MsgRef) int {
+// mark_read. The read itself never fails because of it: the outcome says what was marked and
+// what was not, and why; unmarked messages stay unmarked for a later mark.
+func (a *Account) MarkReturned(ctx context.Context, refs []MsgRef) MarkOutcome {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.settings.ReadReceipts == "off" || len(refs) == 0 {
-		return 0
+	out, err := a.markLocked(ctx, refs)
+	if err != nil {
+		a.log.Error("marking returned messages read failed", "err", err)
+		out.Reason = MarkReasonInternal
+		// Whatever was not counted could not be looked at: report it as failed.
+		if rest := len(refs) - out.Marked - out.AlreadyMarked; rest > out.Failed {
+			out.Failed = rest
+		}
 	}
-	n, _, err := a.markLocked(ctx, refs)
-	if err != nil && !errors.Is(err, client.ErrNotConnected) {
-		a.log.Warn("marking returned messages read failed", "err", err)
-	}
-	return n
+	return out
+}
+
+// MarkFailed is the error line a follow stream sends when a mark fails; the stream goes on.
+type MarkFailed struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	MarkOutcome
+}
+
+// MarkFailedLine describes a mark that sent fewer receipts than asked.
+func MarkFailedLine(m MarkOutcome) MarkFailed {
+	return MarkFailed{Code: "mark_failed", Message: fmt.Sprintf("%d of the returned messages were not marked read (%s).", m.Failed, m.Reason), MarkOutcome: m}
 }
 
 // EventRefs are the incoming messages among events.
@@ -149,10 +219,9 @@ type MarkReadBody struct {
 
 // MarkReadResult is the answer to POST /v1/mark-read.
 type MarkReadResult struct {
-	Chat          string `json:"chat"`
-	Marked        int    `json:"marked"`
-	AlreadyMarked int    `json:"already_marked"`
-	ReadReceipts  string `json:"read_receipts"`
+	Chat string `json:"chat"`
+	MarkOutcome
+	ReadReceipts string `json:"read_receipts"`
 }
 
 func str(p *string) string {
@@ -164,7 +233,8 @@ func str(p *string) string {
 
 // MarkRead marks one kept message read ({chat, id}; chat may be omitted when the id is kept in one
 // chat only) or every kept incoming message of a chat up to and including one ({chat, through}).
-// Under read_receipts off it is a no-op.
+// Under read_receipts off it sends nothing and says so (failed, reason off). A partial mark says
+// how many were sent and how many were not.
 func (a *Account) MarkRead(ctx context.Context, b MarkReadBody) (*MarkReadResult, error) {
 	chatRef, id, through := str(b.Chat), str(b.ID), str(b.Through)
 	if (id == "") == (through == "") {
@@ -212,15 +282,8 @@ func (a *Account) MarkRead(ctx context.Context, b MarkReadBody) (*MarkReadResult
 		}
 	}
 	res := &MarkReadResult{Chat: chat, ReadReceipts: a.settings.ReadReceipts}
-	if a.settings.ReadReceipts == "off" {
-		return res, nil
-	}
-	res.Marked, res.AlreadyMarked, err = a.markLocked(ctx, refs)
-	if err != nil {
-		if res.Marked > 0 {
-			a.log.Warn("marking read stopped part way", "marked", res.Marked)
-		}
-		return nil, a.clientErr(err, "Marking read")
+	if res.MarkOutcome, err = a.markLocked(ctx, refs); err != nil {
+		return nil, err
 	}
 	return res, nil
 }
@@ -271,11 +334,12 @@ func (a *Account) Typing(ctx context.Context, b TypingBody) (*TypingResult, erro
 		if !wasOn {
 			return &TypingResult{Chat: chat}, nil
 		}
-		cur.timer.Stop()
-		delete(a.typing.timers, chat)
+		// The local timer goes only once the stop was sent, so a failed stop can be retried.
 		if err := a.client.SendTyping(ctx, chat, false); err != nil {
 			return nil, a.clientErr(err, "Clearing the typing indicator")
 		}
+		cur.timer.Stop()
+		delete(a.typing.timers, chat)
 		return &TypingResult{Chat: chat, Changed: true}, nil
 	}
 	if err := a.requireConnected("Showing typing"); err != nil {

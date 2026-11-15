@@ -102,6 +102,9 @@ type Status struct {
 	LastPhoneActivity       *string `json:"last_phone_activity"`
 	LastPhoneActivityApprox bool    `json:"last_phone_activity_approximate"`
 	Counts                  Counts  `json:"counts"`
+	// SendTimeoutSeconds is how long the daemon carries one send (SendTimeout); the CLI waits
+	// at least this long for a send, a file or a reaction.
+	SendTimeoutSeconds int `json:"send_timeout_seconds"`
 }
 
 // Counts are the store totals in a status.
@@ -116,6 +119,7 @@ func (a *Account) Status(ctx context.Context) (*Status, error) {
 	st, reason, since := a.State()
 	s := &Status{
 		Protocol:                Protocol,
+		SendTimeoutSeconds:      int(SendTimeout / time.Second),
 		Account:                 a.layout.Account,
 		State:                   st,
 		Since:                   rfc3339(since),
@@ -166,33 +170,39 @@ FROM chats c WHERE c.id=?`, id).Scan(&c.ID, &c.Name, &c.Type, &last, &c.Discarde
 }
 
 // Chats is GET /v1/chats: chats with kept content, most recently kept first.
-func (a *Account) Chats(ctx context.Context) ([]ChatSummary, error) {
+// Chats returns the chats with kept content, most recently kept first: at most limit of them
+// (0 for all), and how many there are in all.
+func (a *Account) Chats(ctx context.Context, limit int) ([]ChatSummary, int, error) {
 	rows, err := a.db.QueryContext(ctx, `SELECT id FROM chats c WHERE EXISTS (SELECT 1 FROM messages WHERE chat_id=c.id) ORDER BY coalesce(last_kept_at,0) DESC, id`)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, 0, err
 		}
 		ids = append(ids, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total := len(ids)
+	if limit > 0 && len(ids) > limit {
+		ids = ids[:limit]
 	}
 	out := []ChatSummary{}
 	for _, id := range ids {
 		c, err := a.summary(ctx, a.db, id)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, c)
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // GroupSummary is one row of GET /v1/groups.
@@ -207,10 +217,11 @@ type GroupSummary struct {
 
 // Groups is GET /v1/groups: every group the account is a member of, kept content or not, asked
 // of WhatsApp now (scopes.md "Membership is not content"). Member lists are not stored.
-func (a *Account) Groups(ctx context.Context) ([]GroupSummary, error) {
+// At most limit groups are returned (0 for all), with how many there are in all.
+func (a *Account) Groups(ctx context.Context, limit int) ([]GroupSummary, int, error) {
 	gs, err := a.client.JoinedGroups(ctx)
 	if err != nil {
-		return nil, a.clientErr(err, "Listing groups")
+		return nil, 0, a.clientErr(err, "Listing groups")
 	}
 	s := a.Settings()
 	out := make([]GroupSummary, 0, len(gs))
@@ -218,7 +229,7 @@ func (a *Account) Groups(ctx context.Context) ([]GroupSummary, error) {
 		row := GroupSummary{ID: g.ID, Name: g.Name, Members: g.Members, Override: s.Chats[g.ID]}
 		row.Scope = scope.EffectiveScope(s.Scope, row.Override)
 		if err := a.db.QueryRowContext(ctx, `SELECT coalesce((SELECT n FROM discard_counters WHERE chat_key=?),0)`, g.ID).Scan(&row.Discarded); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, row)
 	}
@@ -228,7 +239,11 @@ func (a *Account) Groups(ctx context.Context) ([]GroupSummary, error) {
 		}
 		return out[i].ID < out[j].ID
 	})
-	return out, nil
+	total := len(out)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, total, nil
 }
 
 // Chat is GET /v1/chats/{chat}. A group the account is in but has kept nothing from is answered
@@ -260,11 +275,16 @@ func (a *Account) Chat(ctx context.Context, ref string) (*ChatDetail, error) {
 	}
 	for rows.Next() {
 		var al string
-		if err := rows.Scan(&al); err == nil {
-			d.Aliases = append(d.Aliases, al)
+		if err := rows.Scan(&al); err != nil {
+			rows.Close()
+			return nil, err
 		}
+		d.Aliases = append(d.Aliases, al)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	own := a.own()
 	ops := a.Settings().Operators
@@ -333,9 +353,8 @@ type EventQuery struct {
 	Kind  string
 }
 
-// Events returns events matching q, oldest first. Without After it returns the most recent Limit
-// events.
-func (a *Account) Events(ctx context.Context, q EventQuery) ([]Event, error) {
+// eventWhere is the filter of q, without its limit.
+func eventWhere(q EventQuery) (string, []any) {
 	where := []string{"1=1"}
 	var args []any
 	if q.Chat != "" {
@@ -346,16 +365,33 @@ func (a *Account) Events(ctx context.Context, q EventQuery) ([]Event, error) {
 		where = append(where, "e.kind=?")
 		args = append(args, q.Kind)
 	}
-	order := "DESC"
 	if q.After != nil {
 		where = append(where, "e.seq>?")
 		args = append(args, *q.After)
+	}
+	return strings.Join(where, " AND "), args
+}
+
+// EventsTotal is how many events match q without its limit: after After when given, else all.
+func (a *Account) EventsTotal(ctx context.Context, q EventQuery) (int64, error) {
+	where, args := eventWhere(q)
+	var n int64
+	err := a.db.QueryRowContext(ctx, `SELECT count(*) FROM events e WHERE `+where, args...).Scan(&n)
+	return n, err
+}
+
+// Events returns events matching q, oldest first. Without After it returns the most recent Limit
+// events.
+func (a *Account) Events(ctx context.Context, q EventQuery) ([]Event, error) {
+	where, args := eventWhere(q)
+	order := "DESC"
+	if q.After != nil {
 		order = "ASC"
 	}
 	args = append(args, q.Limit)
 	rows, err := a.db.QueryContext(ctx, `SELECT e.seq, e.t, e.kind, e.payload, coalesce(c.id,''), coalesce(c.type,''), coalesce(c.name,'')
 FROM events e LEFT JOIN chats c ON c.id=e.chat_id
-WHERE `+strings.Join(where, " AND ")+` ORDER BY e.seq `+order+` LIMIT ?`, args...)
+WHERE `+where+` ORDER BY e.seq `+order+` LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -479,8 +515,11 @@ type MessagesPage struct {
 	Chat     ChatRef       `json:"chat"`
 	Messages []MessageView `json:"messages"`
 	More     bool          `json:"more"`
-	// MarkedRead is how many returned messages a mark_read request marked now.
-	MarkedRead *int `json:"marked_read,omitempty"`
+	// Total is how many kept messages of the chat the request covers (before the given id, when
+	// one is given); len(Messages) of Total were returned.
+	Total int64 `json:"total"`
+	// MarkRead is what a mark_read request marked, and what it could not.
+	MarkRead *MarkOutcome `json:"mark_read,omitempty"`
 }
 
 // Messages returns kept messages of a chat, newest last, before an optional message id.
@@ -506,6 +545,10 @@ func (a *Account) Messages(ctx context.Context, chatRef, before string, limit in
 		cond = ` AND (ts < ? OR (ts = ? AND rowid < ?))`
 		args = append(args, ts, ts, rowid)
 	}
+	var total int64
+	if err := a.db.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE chat_id=?`+cond, args...).Scan(&total); err != nil {
+		return nil, err
+	}
 	args = append(args, limit+1)
 	rows, err := a.db.QueryContext(ctx, `SELECT `+messageColumns+` FROM messages WHERE chat_id=?`+cond+` ORDER BY ts DESC, rowid DESC LIMIT ?`, args...)
 	if err != nil {
@@ -524,7 +567,7 @@ func (a *Account) Messages(ctx context.Context, chatRef, before string, limit in
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	page := &MessagesPage{Chat: ChatRef{ID: sum.ID, Type: sum.Type, Name: sum.Name}, Messages: []MessageView{}}
+	page := &MessagesPage{Chat: ChatRef{ID: sum.ID, Type: sum.Type, Name: sum.Name}, Messages: []MessageView{}, Total: total}
 	if len(list) > limit {
 		page.More = true
 		list = list[:limit]
@@ -650,11 +693,16 @@ func (a *Account) Forget(ctx context.Context, chatRef, id string) (*ForgetResult
 	}
 	for rows.Next() {
 		var p string
-		if rows.Scan(&p) == nil {
-			media = append(media, p)
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return nil, err
 		}
+		media = append(media, p)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	if id != "" {
 		r, err := tx.ExecContext(ctx, `DELETE FROM events WHERE chat_id=? AND message_id=?`, chat, id)
 		if err != nil {
@@ -677,11 +725,19 @@ func (a *Account) Forget(ctx context.Context, chatRef, id string) (*ForgetResult
 	if err := pruneEmptyChats(ctx, tx); err != nil {
 		return nil, err
 	}
+	// The downloaded files go first: if one cannot be removed, nothing is forgotten and the
+	// request fails, so it can be run again. Never report forgotten while a file is still on disk.
+	failed := 0
+	for _, p := range media {
+		if a.removeMedia(p) != nil {
+			failed++
+		}
+	}
+	if failed > 0 {
+		return nil, &APIError{Status: http.StatusInternalServerError, Code: "internal", Message: fmt.Sprintf("Nothing was forgotten: %d downloaded media file(s) could not be removed; see the daemon's log, then run forget again.", failed)}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
-	}
-	for _, p := range media {
-		a.removeMedia(p)
 	}
 	a.checkpoint(ctx)
 	return res, nil
@@ -743,7 +799,7 @@ func (a *Account) RunRetention(ctx context.Context) (RetentionResult, error) {
 		return res, err
 	}
 	for _, p := range media {
-		a.removeMedia(p)
+		_ = a.removeMedia(p) // logged
 	}
 	if res.Messages > 0 {
 		a.checkpoint(ctx)
@@ -790,6 +846,15 @@ func (a *Account) PatchSettings(ctx context.Context, body []byte) (*SettingsResu
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, badRequest("the body must be a JSON object: %v", err)
 	}
+	// confirm is not a setting: it says the caller means a change that loosens a safeguard.
+	confirm := false
+	if c, ok := raw["confirm"]; ok {
+		if err := json.Unmarshal(c, &confirm); err != nil {
+			return nil, badRequest("settings: confirm: must be true or false")
+		}
+		delete(raw, "confirm")
+		body, _ = json.Marshal(raw)
+	}
 	if chats, ok := raw["chats"]; ok && string(chats) != "null" {
 		var m map[string]json.RawMessage
 		if err := json.Unmarshal(chats, &m); err != nil {
@@ -814,6 +879,9 @@ func (a *Account) PatchSettings(ctx context.Context, body []byte) (*SettingsResu
 	if err != nil {
 		return nil, badRequest("%s", err.Error())
 	}
+	if loosened := Loosens(a.settings, next); len(loosened) > 0 && !confirm {
+		return nil, conflict("confirm_required", "", "This change widens what the account reads or loosens a send safeguard (%s); send it with confirm: true.", strings.Join(loosened, ", "))
+	}
 	changed := !settings.Equal(next, a.settings)
 	if changed {
 		if err := a.writeSettings(next); err != nil {
@@ -821,6 +889,45 @@ func (a *Account) PatchSettings(ctx context.Context, body []byte) (*SettingsResu
 		}
 	}
 	return SettingsView(next, &changed), nil
+}
+
+// Loosens lists what a change from prev to next widens or loosens, each needing confirm
+// (specs/cli.md "What needs --confirm"): scope full (the account's or a chat's), dm_from anyone,
+// send.first_contact allow, and raising a send limit above its current value. Tightening, and
+// setting a value already in place, needs nothing.
+func Loosens(prev, next settings.Settings) []string {
+	var out []string
+	if next.Scope == settings.ScopeFull && prev.Scope != settings.ScopeFull {
+		out = append(out, "scope full")
+	}
+	var chats []string
+	for id, v := range next.Chats {
+		if v == settings.ScopeFull && prev.Chats[id] != settings.ScopeFull {
+			chats = append(chats, "chats."+id+" full")
+		}
+	}
+	sort.Strings(chats)
+	out = append(out, chats...)
+	if next.DMFrom == "anyone" && prev.DMFrom != "anyone" {
+		out = append(out, "dm_from anyone")
+	}
+	if next.Send.FirstContact == "allow" && prev.Send.FirstContact != "allow" {
+		out = append(out, "send.first_contact allow")
+	}
+	for _, l := range []struct {
+		key        string
+		prev, next int
+	}{
+		{"send.per_hour", prev.Send.PerHour, next.Send.PerHour},
+		{"send.per_minute", prev.Send.PerMinute, next.Send.PerMinute},
+		{"send.same_text_chats", prev.Send.SameTextChats, next.Send.SameTextChats},
+		{"send.max_file_mb", prev.Send.MaxFileMB, next.Send.MaxFileMB},
+	} {
+		if l.next > l.prev {
+			out = append(out, fmt.Sprintf("raising %s from %d to %d", l.key, l.prev, l.next))
+		}
+	}
+	return out
 }
 
 // writeSettings writes and applies settings. The caller holds a.mu.

@@ -7,7 +7,8 @@ import { accountExists, listAccounts, roots, validAccount, accountPaths, type Ro
 
 export interface Ctx {
   roots: Roots;
-  daemon(account: string): Daemon;
+  /** The daemon client of an account; timeoutMs shortens its request limit (the home view). */
+  daemon(account: string, timeoutMs?: number): Daemon;
   /** The service manager of the daemon commands (systemd user services on Linux). */
   service: ServiceManager;
 }
@@ -21,7 +22,7 @@ export function setServiceFactory(f: () => ServiceManager): void {
 
 export function defaultCtx(): Ctx {
   const r = roots();
-  return { roots: r, daemon: (a) => new Daemon(a, accountPaths(a, r).socket), service: serviceFactory() };
+  return { roots: r, daemon: (a, t) => new Daemon(a, accountPaths(a, r).socket, t), service: serviceFactory() };
 }
 
 /** Resolves --account: required with several accounts, optional with exactly one. */
@@ -74,4 +75,45 @@ export function pick<T extends Record<string, unknown>>(rows: T[], keys: string[
 
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
+}
+
+/** What a mark did, as the daemon reports it (specs/daemon.md "Receipts and typing"). */
+export interface MarkOutcome {
+  marked: number;
+  already_marked: number;
+  failed: number;
+  reason?: string;
+}
+
+export function asMarkOutcome(v: unknown): MarkOutcome | undefined {
+  const o = v as Record<string, unknown> | null | undefined;
+  if (!o || typeof o !== "object" || typeof o.marked !== "number") return undefined;
+  return {
+    marked: o.marked,
+    already_marked: typeof o.already_marked === "number" ? o.already_marked : 0,
+    failed: typeof o.failed === "number" ? o.failed : 0,
+    ...(typeof o.reason === "string" && o.reason ? { reason: o.reason } : {}),
+  };
+}
+
+/** The fix for a mark that was not sent, by reason. */
+export function markFix(reason: string | undefined, af: string, retry: string): string {
+  switch (reason) {
+    case "off":
+      return `read_receipts is off, so no read receipt is sent; run \`whatsapp-axi settings set read_receipts on-read${af}\` to send them, then \`${retry}\``;
+    case "not_connected":
+      return `The account is not connected; run \`whatsapp-axi doctor${af}\`, then \`${retry}\` once it is connected`;
+    default:
+      return `WhatsApp did not take the read receipt; run \`${retry}\` to try again (the daemon's log has the cause)`;
+  }
+}
+
+/**
+ * Sets exit code 1 when a mark that was asked for was not fully sent; the command still prints what
+ * it read. Returns the help line naming the fix, or undefined when everything was marked.
+ */
+export function markFailed(m: MarkOutcome | undefined, af: string, retry: string): string | undefined {
+  if (!m || m.failed === 0) return undefined;
+  process.exitCode = 1;
+  return markFix(m.reason, af, retry);
 }

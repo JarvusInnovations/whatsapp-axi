@@ -21,6 +21,11 @@ export class FakeService implements ServiceManager {
   logLines: string[] = [];
   logResult: CommandResult = { code: 0, stdout: "", stderr: "" };
   failVerb: string | undefined;
+  /** A started unit runs a fake daemon on the account's socket, as the real service would. */
+  runDaemons = true;
+  /** When set, a started unit ends in this state and serves nothing (failed, activating). */
+  startAs: "failed" | "activating" | "active-silent" | undefined;
+  daemons = new Map<string, FakeDaemon>();
 
   constructor(private readonly unitDir: string) {}
 
@@ -36,9 +41,30 @@ export class FakeService implements ServiceManager {
     return this.linger;
   }
 
-  private set(unit: string, active: boolean): void {
+  private async set(unit: string, active: boolean): Promise<void> {
     const prev = this.states.get(unit);
-    this.states.set(unit, { active: active ? "active" : "inactive", sub: active ? "running" : "dead", enabled: prev?.enabled ?? "", since: active ? "2030-01-05 14:00:00 UTC" : null, pid: active ? 4242 : null });
+    const as = active ? this.startAs : undefined;
+    const state = as === "failed" ? { active: "failed", sub: "failed" } : as === "activating" ? { active: "activating", sub: "auto-restart" } : { active: active ? "active" : "inactive", sub: active ? "running" : "dead" };
+    this.states.set(unit, { ...state, enabled: prev?.enabled ?? "", since: active ? "2030-01-05 14:00:00 UTC" : null, pid: active ? 4242 : null });
+    const name = /^whatsapp-axi@(.+)\.service$/.exec(unit)?.[1];
+    if (!name) return;
+    const running = this.daemons.get(name);
+    // A restart keeps the same fake daemon, so a test's routes survive it.
+    if (running && active && as === undefined) return;
+    if (running) {
+      this.daemons.delete(name);
+      await running.close();
+    }
+    if (active && this.runDaemons && as === undefined) {
+      const d = new FakeDaemon();
+      await d.listen(join(process.env.XDG_RUNTIME_DIR ?? "", "whatsapp-axi", `${name}.sock`));
+      this.daemons.set(name, d);
+    }
+  }
+
+  async closeAll(): Promise<void> {
+    for (const d of this.daemons.values()) await d.close();
+    this.daemons.clear();
   }
 
   async systemctl(args: string[]): Promise<CommandResult> {
@@ -51,20 +77,20 @@ export class FakeService implements ServiceManager {
       case "enable":
         mkdirSync(wants, { recursive: true });
         writeFileSync(join(wants, unit), "");
-        if (args.includes("--now")) this.set(unit, true);
+        if (args.includes("--now")) await this.set(unit, true);
         this.states.set(unit, { ...this.states.get(unit)!, enabled: "enabled" });
         break;
       case "disable":
         rmSync(join(wants, unit), { force: true });
-        if (args.includes("--now")) this.set(unit, false);
+        if (args.includes("--now")) await this.set(unit, false);
         this.states.set(unit, { ...this.states.get(unit)!, enabled: "disabled" });
         break;
       case "start":
       case "restart":
-        this.set(unit, true);
+        await this.set(unit, true);
         break;
       case "stop":
-        this.set(unit, false);
+        await this.set(unit, false);
         break;
     }
     return { code: 0, stdout: "", stderr: "" };
@@ -90,7 +116,7 @@ export let service: FakeService;
 export interface Env {
   home: string;
   runtime: string;
-  cleanup(): void;
+  cleanup(): Promise<void>;
 }
 
 const VARS = ["HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "WHATSAPP_AXI_DAEMON"];
@@ -112,7 +138,8 @@ export function makeEnv(): Env {
   return {
     home,
     runtime,
-    cleanup() {
+    async cleanup() {
+      await service.closeAll();
       for (const [k, v] of Object.entries(saved)) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
@@ -145,6 +172,10 @@ export interface Reply {
   lines?: unknown[];
   /** For streams: end the response after the lines (a stream with a final line). */
   end?: boolean;
+  /** Never answer (a daemon that hangs). */
+  hang?: boolean;
+  /** Drop the connection without answering. */
+  drop?: boolean;
 }
 
 export type Route = (req: { method: string; path: string; query: URLSearchParams; body: unknown }) => Reply;
@@ -235,6 +266,11 @@ export class FakeDaemon {
         }
       }
       const reply = fn ? fn({ method: req.method ?? "", path: url.pathname, query: url.searchParams, body }) : apiError(400, "bad_request", "Unknown request.");
+      if (reply.hang) return;
+      if (reply.drop) {
+        req.socket.destroy();
+        return;
+      }
       if (reply.lines) {
         res.writeHead(200, { "Content-Type": "application/x-ndjson" });
         for (const l of reply.lines) res.write(JSON.stringify(l) + "\n");

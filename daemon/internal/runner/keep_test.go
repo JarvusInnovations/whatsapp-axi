@@ -258,7 +258,7 @@ func TestDMFromAndOperators(t *testing.T) {
 		t.Fatalf("discard counted: %+v", st.Counts)
 	}
 	// dm_from anyone.
-	d.patch(`{"dm_from":"anyone"}`)
+	d.patch(`{"dm_from":"anyone","confirm":true}`)
 	c2 := d.emit(dm(caseyLID, ""))
 	if !d.kept(caseyLID, c2.ID) {
 		t.Fatal("dm_from anyone")
@@ -279,7 +279,7 @@ func TestDirectChatRekeyed(t *testing.T) {
 	e := newEnv(t)
 	e.init()
 	d := e.start(startOpts{})
-	d.patch(`{"dm_from":"anyone","chats":{"+15550100003":"full"}}`)
+	d.patch(`{"dm_from":"anyone","chats":{"+15550100003":"full"},"confirm":true}`)
 	first := d.emit(msg("by phone number", func(m *client.Message) {
 		m.Chat, m.ChatType, m.Sender, m.SenderAlt = caseyPN, client.ChatDirect, caseyPN, ""
 	}))
@@ -517,7 +517,7 @@ func TestRetention(t *testing.T) {
 		t.Fatal("seq reused after retention")
 	}
 	// full accounts default to unlimited retention.
-	d.patch(`{"retain_days":null,"scope":"full"}`)
+	d.patch(`{"retain_days":null,"scope":"full","confirm":true}`)
 	d.clock.Add(1000 * 24 * time.Hour)
 	if res, _ := d.acct.RunRetention(t.Context()); res.Messages != 0 {
 		t.Fatal("full defaults to unlimited")

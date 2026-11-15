@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -649,7 +650,7 @@ UPDATE messages SET text='', mentions='[]', mentions_me=0, reply_text='', media=
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	a.removeMedia(mediaPath)
+	_ = a.removeMedia(mediaPath) // logged
 	a.checkpoint(ctx)
 	a.afterCommit(ctx, []pending{ev})
 	return nil
@@ -687,11 +688,18 @@ ON CONFLICT(chat_id, message_id, sender_id) DO UPDATE SET emoji=excluded.emoji, 
 
 // removeMedia deletes a fetched media file. Only file names the daemon built are stored, and only
 // the base name is used, so nothing outside media/ can be touched.
-func (a *Account) removeMedia(name string) {
+// removeMedia deletes a downloaded file. A file already gone is not an error; any other failure
+// is logged and returned.
+func (a *Account) removeMedia(name string) error {
 	if name == "" {
-		return
+		return nil
 	}
-	_ = os.Remove(filepath.Join(a.layout.MediaDir(), filepath.Base(name)))
+	err := os.Remove(filepath.Join(a.layout.MediaDir(), filepath.Base(name)))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		a.log.Error("removing a media file failed", "err", err)
+		return err
+	}
+	return nil
 }
 
 // checkpoint folds the WAL into the database and truncates it, so content removed under secure

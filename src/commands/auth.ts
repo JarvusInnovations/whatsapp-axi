@@ -89,7 +89,9 @@ export async function authLink(ctx: Ctx, args: string[], write: (s: string) => v
     }
   }
   if (signal?.aborted) {
-    return { linked: false, note: "stopped; the daemon abandons the attempt" };
+    // Interrupted (SIGINT or SIGTERM): the account is not linked, so this is not a success.
+    const again = phone ? `whatsapp-axi auth link --phone ${phone}${af}` : `whatsapp-axi auth link --qr${af}`;
+    throw failure("The link was interrupted before the phone completed it; the daemon abandons the attempt and the account is not linked.", "link_interrupted", [`Run \`${again}\` to try again`]);
   }
   throw failure(`The daemon of account ${account} ended the link stream without a result.`, "stream_closed", [`Run \`whatsapp-axi doctor --account ${account}\``]);
 }

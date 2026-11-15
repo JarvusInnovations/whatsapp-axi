@@ -13,12 +13,24 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await fake.close();
-  env.cleanup();
+  await env.cleanup();
 });
 
 const ME = { id: "100000000000000@lid", lid: "100000000000000@lid", pn: "+15550100000", name: "", me: true, operator: false };
 
 describe("auth link", () => {
+  it("interrupted before the phone completes it is a failure, never a success", async () => {
+    fake.route("POST /v1/link", () => ({ lines: [{ code: "ABCD-EFGH" }] }));
+    const { authLink } = await import("../src/commands/auth.js");
+    const { defaultCtx } = await import("../src/context.js");
+    const { exitCodeFor } = await import("../src/errors.js");
+    const ac = new AbortController();
+    const err = (await authLink(defaultCtx(), ["--phone", "+15550100000"], () => ac.abort(), ac.signal).catch((e) => e)) as { code: string; suggestions: string[] };
+    expect(err.code).toBe("link_interrupted");
+    expect(exitCodeFor(err)).toBe(1);
+    expect(err.suggestions[0]).toContain("whatsapp-axi auth link --phone +15550100000");
+  });
+
   it("prints the pairing code and where to type it, then the result", async () => {
     fake.route("POST /v1/link", () => ({ lines: [{ code: "ABCD-EFGH" }, { result: { linked: true, state: "connected", me: ME } }], end: true }));
     const r = await run(["auth", "link", "--phone", "+15550100000"]);

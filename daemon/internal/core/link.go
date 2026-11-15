@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -46,6 +47,11 @@ func conflict(code, state, format string, a ...any) *APIError {
 // WhatsAppError is a failure WhatsApp reported, with a cleaned-up reason.
 func WhatsAppError(msg string) *APIError {
 	return &APIError{Status: http.StatusBadGateway, Code: "whatsapp_error", Message: msg}
+}
+
+// OutcomeUnknown is a send whose result the daemon could not determine: it may have gone out.
+func OutcomeUnknown(what string) *APIError {
+	return &APIError{Status: http.StatusGatewayTimeout, Code: "outcome_unknown", Message: fmt.Sprintf("%s: the daemon could not tell whether WhatsApp accepted it; it may have gone out.", what)}
 }
 
 // notConnected is the error of a request that needs a live connection.

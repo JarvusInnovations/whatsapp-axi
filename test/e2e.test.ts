@@ -35,7 +35,7 @@ describe.skipIf(!ready)("end to end with the real daemon", () => {
       child.kill("SIGTERM");
       await new Promise((r) => child?.once("close", r));
     }
-    env.cleanup();
+    await env.cleanup();
   });
 
   it("account add, daemon run, scope set, operators add, events", async () => {

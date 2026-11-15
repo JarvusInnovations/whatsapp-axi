@@ -15,6 +15,11 @@ export function startCommand(account: string): string {
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
+/** The daemon's send timeout when its status does not say (core.SendTimeout). */
+export const DEFAULT_SEND_TIMEOUT_S = 600;
+/** How much longer than the daemon the CLI waits for a send, so the daemon answers first. */
+export const SEND_MARGIN_MS = 30_000;
+
 export interface Status {
   protocol: number;
   account: string;
@@ -27,6 +32,7 @@ export interface Status {
   last_phone_activity: string | null;
   last_phone_activity_approximate: boolean;
   counts: { chats: number; messages: number; discarded: number; last_seq: number };
+  send_timeout_seconds?: number;
 }
 
 type Json = Record<string, unknown>;
@@ -43,7 +49,7 @@ function badResponse(account: string, what: string) {
   ]);
 }
 
-function helpForCode(account: string, code: string, body: Json): string[] {
+function helpForCode(account: string, code: string, body: Json, chat?: string): string[] {
   switch (code) {
     case "not_found":
       return [`Run \`whatsapp-axi chats --account ${account}\` to see the kept chats`];
@@ -65,6 +71,8 @@ function helpForCode(account: string, code: string, body: Json): string[] {
       return ["The same text went to too many chats in ten minutes (`send.same_text_chats`); vary the text or wait"];
     case "not_downloadable":
       return ["The media cannot be fetched: it is missing, view-once, or expired on WhatsApp's servers"];
+    case "outcome_unknown":
+      return [outcomeHelp(account, chat)];
     case "link_in_progress":
       return ["Wait for the running link attempt to end (it lasts at most about three minutes)"];
     case "internal":
@@ -72,6 +80,15 @@ function helpForCode(account: string, code: string, body: Json): string[] {
     default:
       return [];
   }
+}
+
+function outcomeHelp(account: string, chat: string | undefined): string {
+  return `Run \`whatsapp-axi read ${chat ?? "<chat>"} --account ${account}\` to check whether it went out before sending again: a retry may duplicate it`;
+}
+
+/** A send the CLI stopped waiting for: it may have gone out. */
+function outcomeUnknown(account: string, chat: string | undefined, why: string) {
+  return failure(`The daemon of account ${account} did not answer the send (${why}); it may have gone out.`, "outcome_unknown", [outcomeHelp(account, chat)]);
 }
 
 function connError(account: string, err: NodeJS.ErrnoException) {
@@ -87,6 +104,8 @@ export class Daemon {
   private checked: Status | undefined;
 
   private readonly timeoutMs: number;
+  /** Added to the daemon's send timeout (tests shorten it). */
+  sendMarginMs = SEND_MARGIN_MS;
 
   constructor(account: string, socket = accountPaths(account, roots()).socket, timeoutMs = REQUEST_TIMEOUT_MS) {
     this.account = account;
@@ -94,8 +113,9 @@ export class Daemon {
     this.timeoutMs = timeoutMs;
   }
 
-  private raw(method: string, path: string, body?: unknown): Promise<{ status: number; json: Json }> {
+  private raw(method: string, path: string, body?: unknown, send?: { chat?: string; timeoutMs: number }): Promise<{ status: number; json: Json }> {
     return new Promise((resolve, reject) => {
+      let written = false;
       const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
       const req = request(
         {
@@ -107,12 +127,12 @@ export class Daemon {
             Accept: "application/json",
             ...(payload ? { "Content-Type": "application/json", "Content-Length": payload.length } : {}),
           },
-          timeout: this.timeoutMs,
+          timeout: send ? send.timeoutMs : this.timeoutMs,
         },
         (res) => {
           const chunks: Buffer[] = [];
           res.on("data", (c: Buffer) => chunks.push(c));
-          res.on("error", (e) => reject(connError(this.account, e)));
+          res.on("error", (e) => reject(send ? outcomeUnknown(this.account, send.chat, "the answer was cut off") : connError(this.account, e)));
           res.on("end", () => {
             const text = Buffer.concat(chunks).toString("utf-8");
             let json: unknown;
@@ -132,18 +152,26 @@ export class Daemon {
       );
       req.on("timeout", () => {
         req.destroy();
-        reject(failure(`The daemon of account ${this.account} did not answer in time.`, "daemon_timeout", [`Run \`whatsapp-axi doctor --account ${this.account}\``]));
+        if (send) reject(outcomeUnknown(this.account, send.chat, `no answer in ${Math.round(send.timeoutMs / 1000)} s`));
+        else reject(failure(`The daemon of account ${this.account} did not answer in time.`, "daemon_timeout", [`Run \`whatsapp-axi doctor --account ${this.account}\``]));
       });
-      req.on("error", (e: NodeJS.ErrnoException) => reject(connError(this.account, e)));
+      req.on("error", (e: NodeJS.ErrnoException) => {
+        // A send whose request reached the daemon and then lost its connection may have gone out.
+        if (send && written && ["ECONNRESET", "EPIPE"].includes(e.code ?? "")) reject(outcomeUnknown(this.account, send.chat, "the connection was lost"));
+        else reject(connError(this.account, e));
+      });
+      req.on("finish", () => {
+        written = true;
+      });
       if (payload) req.write(payload);
       req.end();
     });
   }
 
-  private fail(status: number, json: Json): never {
+  private fail(status: number, json: Json, chat?: string): never {
     const e = json.error as Json | undefined;
     if (!e || typeof e.code !== "string" || typeof e.message !== "string") throw badResponse(this.account, `status ${status} without an error body`);
-    const help = helpForCode(this.account, e.code, e);
+    const help = helpForCode(this.account, e.code, e, chat);
     const err = failure(e.message, e.code, help) as ReturnType<typeof failure> & { details?: Json };
     err.details = e;
     output.daemonError = e;
@@ -174,6 +202,24 @@ export class Daemon {
     if (!this.checked) await this.status();
     const { status, json } = await this.raw(method, path, body);
     if (status < 200 || status > 299) this.fail(status, json);
+    output.body = json;
+    return json;
+  }
+
+  /** How long a send is waited for: the daemon's send timeout plus the margin, never less than a plain request. */
+  sendTimeoutMs(st: Pick<Status, "send_timeout_seconds">): number {
+    const daemonS = typeof st.send_timeout_seconds === "number" && st.send_timeout_seconds > 0 ? st.send_timeout_seconds : DEFAULT_SEND_TIMEOUT_S;
+    return Math.max(this.timeoutMs, daemonS * 1000 + this.sendMarginMs);
+  }
+
+  /**
+   * A send, a file or a reaction: waits as long as the daemon's own send timeout allows, plus a
+   * margin, never less. When the CLI stops waiting the outcome is unknown, never a plain failure.
+   */
+  async send(path: string, body: Json, chat?: string): Promise<Json> {
+    const st = this.checked ?? (await this.status());
+    const { status, json } = await this.raw("POST", path, body, { chat, timeoutMs: this.sendTimeoutMs(st) });
+    if (status < 200 || status > 299) this.fail(status, json, chat);
     output.body = json;
     return json;
   }

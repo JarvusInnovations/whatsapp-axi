@@ -2,7 +2,8 @@
 // done only after the daemon confirmed it; a value already in place is a no-op that says so.
 import { parse, type CommandSpec } from "../args.js";
 import { expect, type Daemon } from "../client.js";
-import { usage } from "../errors.js";
+import { AxiError } from "axi-sdk-js";
+import { failure, usage } from "../errors.js";
 import { chooseAccount, type Ctx } from "../context.js";
 import { acctFlag } from "./read.js";
 
@@ -43,8 +44,21 @@ async function getSettings(d: Daemon): Promise<SettingsResult> {
   return readResult(d, await d.call("GET", "/v1/settings"));
 }
 
-async function patchSettings(d: Daemon, patch: Obj): Promise<SettingsResult> {
-  const r = readResult(d, await d.call("PATCH", "/v1/settings", patch));
+/**
+ * Sends a settings change. confirm says the caller passed --confirm; retry is the command with
+ * --confirm, named when the daemon refuses a loosening change without it (confirm_required).
+ */
+async function patchSettings(d: Daemon, patch: Obj, confirm = false, retry?: string): Promise<SettingsResult> {
+  let res: Obj;
+  try {
+    res = await d.call("PATCH", "/v1/settings", confirm ? { ...patch, confirm: true } : patch);
+  } catch (err) {
+    if (err instanceof AxiError && err.code === "confirm_required" && retry) {
+      throw failure(err.message, err.code, [`Run \`${retry}\` if you mean to loosen it`]);
+    }
+    throw err;
+  }
+  const r = readResult(d, res);
   expect(d, typeof r.changed === "boolean", "the settings change was not confirmed");
   return r;
 }
@@ -98,28 +112,31 @@ export async function scopeSet(ctx: Ctx, args: string[]): Promise<unknown> {
   const account = chooseAccount(ctx, p.flags.account, "scope set");
   const d = ctx.daemon(account);
   if (chat) {
-    const r = await patchSettings(d, { chats: { [chat]: scope === "default" ? null : scope } });
+    const r = await patchSettings(d, { chats: { [chat]: scope === "default" ? null : scope } }, p.flags.confirm === true);
     const label = scope === "default" ? "default (no override)" : scope;
     return { chat, scope: r.changed ? `${label} (set)` : `${label} (already set, no-op)` };
   }
-  const r = await patchSettings(d, { scope });
+  const r = await patchSettings(d, { scope }, p.flags.confirm === true);
   return { scope: r.changed ? `${scope} (set)` : `${scope} (already set, no-op)` };
 }
 
 export const scopeDMFromSpec: CommandSpec = {
   name: "scope dm-from",
-  summary: "Set whose direct messages are kept: operators or anyone",
+  summary: "Set whose direct messages are kept: operators or anyone. Setting anyone needs --confirm",
   positionals: [{ name: "who", required: true, desc: "operators or anyone" }],
-  flags: { account: ACCOUNT },
-  examples: ["whatsapp-axi scope dm-from operators", "whatsapp-axi scope dm-from anyone"],
+  flags: { account: ACCOUNT, confirm: { type: "bool", desc: "required to set anyone" } },
+  examples: ["whatsapp-axi scope dm-from operators", "whatsapp-axi scope dm-from anyone --confirm"],
 };
 
 export async function scopeDMFrom(ctx: Ctx, args: string[]): Promise<unknown> {
   const p = parse(scopeDMFromSpec, args);
   const who = p.pos[0];
   if (who !== "operators" && who !== "anyone") throw usage("dm-from must be operators or anyone");
+  if (who === "anyone" && !p.flags.confirm) {
+    throw usage("setting anyone needs --confirm: the account then keeps direct messages from anyone, not only operators", ["Run `whatsapp-axi scope dm-from anyone --confirm`"]);
+  }
   const account = chooseAccount(ctx, p.flags.account, "scope dm-from");
-  const r = await patchSettings(ctx.daemon(account), { dm_from: who });
+  const r = await patchSettings(ctx.daemon(account), { dm_from: who }, p.flags.confirm === true, `whatsapp-axi scope dm-from ${who} --confirm${acctFlag(ctx, account)}`);
   return { dm_from: r.changed ? `${who} (set)` : `${who} (already set, no-op)` };
 }
 
@@ -218,8 +235,11 @@ export const settingsSetSpec: CommandSpec = {
     { name: "key", required: true, desc: SETTABLE.join(", ") },
     { name: "value", required: true, desc: "wake_file: absolute path or none; retain_days: days or default; presence: true/false; read_receipts: on-read/on-keep/off" },
   ],
-  flags: { account: ACCOUNT },
-  examples: ["whatsapp-axi settings set wake_file /home/me/.wake/whatsapp", "whatsapp-axi settings set retain_days 30", "whatsapp-axi settings set send.per_hour 20"],
+  flags: {
+    account: ACCOUNT,
+    confirm: { type: "bool", desc: "required to loosen a send safeguard: send.first_contact allow, or raising a send.* limit above its current value" },
+  },
+  examples: ["whatsapp-axi settings set wake_file /home/me/.wake/whatsapp", "whatsapp-axi settings set retain_days 30", "whatsapp-axi settings set send.per_hour 20", "whatsapp-axi settings set send.per_hour 120 --confirm"],
 };
 
 function settingValue(key: string, raw: string): unknown {
@@ -256,9 +276,12 @@ export async function settingsSet(ctx: Ctx, args: string[]): Promise<unknown> {
     throw usage(`${JSON.stringify(key)} cannot be set here; settable keys: ${SETTABLE.join(", ")}`, hint);
   }
   const value = settingValue(key, raw);
+  if (key === "send.first_contact" && value === "allow" && !p.flags.confirm) {
+    throw usage("setting send.first_contact allow needs --confirm: it lets the account message chats it has never heard from", ["Run `whatsapp-axi settings set send.first_contact allow --confirm`"]);
+  }
   const account = chooseAccount(ctx, p.flags.account, "settings set");
   const patch: Obj = key.startsWith("send.") ? { send: { [key.slice(5)]: value } } : { [key]: value };
-  const r = await patchSettings(ctx.daemon(account), patch);
+  const r = await patchSettings(ctx.daemon(account), patch, p.flags.confirm === true, `whatsapp-axi settings set ${key} ${raw} --confirm${acctFlag(ctx, account)}`);
   const shown = value === null ? "default" : String(value);
   return { [key]: r.changed ? `${shown} (set)` : `${shown} (already set, no-op)` };
 }

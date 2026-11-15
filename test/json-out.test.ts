@@ -31,7 +31,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await fake.close();
-  env.cleanup();
+  await env.cleanup();
   rmSync(dir, { recursive: true, force: true });
   if (savedTmp === undefined) delete process.env.TMPDIR;
   else process.env.TMPDIR = savedTmp;

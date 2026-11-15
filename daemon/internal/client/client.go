@@ -152,6 +152,10 @@ var (
 	ErrOutdated = errors.New("WhatsApp rejected the client as too old")
 )
 
+// ErrOutcomeUnknown: a send or reaction may or may not have reached WhatsApp (the request went
+// out and no answer came back in time). It is never retried.
+var ErrOutcomeUnknown = errors.New("the outcome of the send is unknown")
+
 // ErrNoGroup: no such group, or the account is not a member of it.
 var ErrNoGroup = errors.New("no such group, or the account is not a member")
 

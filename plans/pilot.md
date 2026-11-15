@@ -58,4 +58,15 @@ and after a restart and was never retried; a start with a session recorded a fal
 version mismatch; a group with nothing kept could not be seen at all. PR 16 fixes these and
 implements read receipts on read, typing, and the `groups` listing (specs PR 14 and 15).
 
+**2026-11-15, review round (PR 23).** Built to the specs of PRs 20 and 22 after an independent
+source review. A mark that was not sent is no longer reported as done: every mark answer has
+`marked`, `already_marked`, `failed` and a `reason`, and the CLI exits 1. A send is finished by
+the daemon even when the client goes away, and an unknown outcome is `outcome_unknown`. `daemon
+install`, `start` and `restart` now wait for a daemon that answers, and `daemon logs` fails on an
+unreadable journal. The home view and `accounts` degrade one row at a time. Every list states
+`count: N of M`. The daemon refuses loosening settings without `confirm` (`confirm_required`).
+`setup hooks` and the project-scoped `session-start` hook are in, with an installable skill. The
+README is accurate. Also fixed: `forget` with media it cannot remove, retrying a failed
+`typing --stop`, and the exit code of an interrupted `auth link`.
+
 ## Follow-ups

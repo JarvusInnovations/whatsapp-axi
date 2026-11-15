@@ -8,6 +8,7 @@ import { failure, usage } from "../errors.js";
 import { accountExists, listAccounts, accountPaths } from "../paths.js";
 import { requireAccountName, type Ctx } from "../context.js";
 import { AxiError } from "axi-sdk-js";
+import { installedAccounts } from "./daemon.js";
 
 interface AccountRow {
   name: string;
@@ -16,20 +17,40 @@ interface AccountRow {
   phone: string | null;
 }
 
-/** One account's state. A stopped daemon is a state; any other failure is an error. */
+/** How long the home view and `accounts` wait for each account's daemon. */
+export const ROW_TIMEOUT = { ms: 2_000 };
+
+/**
+ * One account's state, asked with a short limit. It never fails: a stopped daemon is `stopped`, one
+ * that does not answer in time is `not answering`, and one that errors is `error (<code>)`
+ * (specs/cli.md "Agent integrations").
+ */
 async function accountRow(ctx: Ctx, name: string): Promise<AccountRow> {
-  const d = ctx.daemon(name);
-  let st: Status;
+  const d = ctx.daemon(name, ROW_TIMEOUT.ms);
+  const ask = async (): Promise<AccountRow> => {
+    const st: Status = await d.status();
+    const s = await d.call("GET", "/v1/settings");
+    const settings = s.settings as { scope?: unknown } | undefined;
+    if (!settings || typeof settings.scope !== "string") return { name, state: "error (bad_response)", scope: null, phone: st.me?.pn ?? null };
+    return { name, state: st.state, scope: settings.scope, phone: st.me?.pn ?? null };
+  };
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<AccountRow>((resolve) => {
+    timer = setTimeout(() => resolve({ name, state: "not answering", scope: null, phone: null }), ROW_TIMEOUT.ms + 100);
+  });
   try {
-    st = await d.status();
-  } catch (err) {
-    if (err instanceof AxiError && err.code === "daemon_not_running") return { name, state: "stopped", scope: null, phone: null };
-    throw err;
+    return await Promise.race([
+      ask().catch((err: unknown): AccountRow => {
+        const code = err instanceof AxiError ? err.code : "internal";
+        if (code === "daemon_not_running") return { name, state: "stopped", scope: null, phone: null };
+        if (code === "daemon_timeout") return { name, state: "not answering", scope: null, phone: null };
+        return { name, state: `error (${code})`, scope: null, phone: null };
+      }),
+      late,
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
-  const s = await d.call("GET", "/v1/settings");
-  const settings = s.settings as { scope?: unknown } | undefined;
-  if (!settings || typeof settings.scope !== "string") throw failure(`The daemon of account ${name} returned unreadable settings.`, "bad_response");
-  return { name, state: st.state, scope: settings.scope, phone: st.me?.pn ?? null };
 }
 
 export const accountsSpec: CommandSpec = {
@@ -51,14 +72,20 @@ export async function accounts(ctx: Ctx, args: string[]): Promise<unknown> {
   return {
     count: names.length,
     accounts: rows.map((r) => Object.fromEntries(keys.map((k) => [k, r[k as keyof AccountRow]]))),
-    help: helpForRows(rows),
+    help: helpForRows(ctx, rows),
   };
 }
 
-function helpForRows(rows: AccountRow[]): string[] {
+function helpForRows(ctx: Ctx, rows: AccountRow[]): string[] {
   const help: string[] = [];
   const stopped = rows.find((r) => r.state === "stopped");
-  if (stopped) help.push(`Run \`${startCommand(stopped.name)}\` to start a stopped daemon`);
+  if (stopped) {
+    // The fix depends on whether the account is installed as a service.
+    if (installedAccounts(ctx).includes(stopped.name)) help.push(`Run \`${startCommand(stopped.name)}\` to start a stopped daemon`);
+    else help.push(`Run \`whatsapp-axi daemon install ${stopped.name}\` to run it as a service, or \`whatsapp-axi daemon run ${stopped.name}\` in the foreground`);
+  }
+  const bad = rows.find((r) => r.state === "not answering" || r.state.startsWith("error"));
+  if (bad) help.push(`Run \`whatsapp-axi daemon status ${bad.name}\` to see why ${bad.name} is ${bad.state}`);
   const flag = rows.length > 1 ? " --account <name>" : "";
   help.push(`Run \`whatsapp-axi chats${flag}\` to see kept chats`, `Run \`whatsapp-axi doctor${flag}\` to check an account`);
   return help;
@@ -68,7 +95,7 @@ export async function home(ctx: Ctx): Promise<unknown> {
   const names = listAccounts(ctx.roots);
   if (names.length === 0) return { accounts: "0 accounts for this user", help: ["Run `whatsapp-axi account add <name>` to create one"] };
   const rows = await Promise.all(names.map((n) => accountRow(ctx, n)));
-  return { accounts: rows.map((r) => ({ name: r.name, state: r.state, scope: r.scope })), help: helpForRows(rows) };
+  return { accounts: rows.map((r) => ({ name: r.name, state: r.state, scope: r.scope })), help: helpForRows(ctx, rows) };
 }
 
 export const accountAddSpec: CommandSpec = {
