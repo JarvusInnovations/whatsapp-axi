@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 pr: 9
 depends: [daemon-core]
 specs:
@@ -35,7 +35,7 @@ and the skill.
 - [x] Unknown flags, missing values and a missing `--account` with several accounts exit 2 with the valid choices
 - [x] With no daemon running, every daemon-backed command names the start command
 - [x] End to end on one machine with the real daemon from `daemon-core`: `account add`, `daemon run`, `scope set`, `operators add`, `events`, all without WhatsApp
-- [ ] Lint, type-check, build and tests pass in CI
+- [x] Lint, type-check, build and tests pass in CI
 
 ## Risks
 
