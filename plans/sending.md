@@ -1,5 +1,6 @@
 ---
-status: in-progress
+status: done
+pr: 11
 depends: [whatsapp-client, cli-core]
 specs:
   - specs/sending.md
