@@ -1,6 +1,6 @@
 // Package client defines what the daemon needs from a WhatsApp client. The real adapter on
-// whatsmeow is a later plan (plans/whatsapp-client.md); in this plan the daemon runs on the
-// offline client, and tests drive it with the fake in client/fake.
+// whatsmeow is client/wa; tests drive the daemon with the fake in client/fake, and client/offline
+// is what a daemon built without a session store runs on.
 //
 // Every JID crossing this interface is a full "user@server" string; a sender may carry a device
 // suffix, which the daemon strips.
@@ -9,6 +9,7 @@ package client
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -125,6 +126,50 @@ type Own struct {
 // ErrNotConnected is returned by calls that need a live connection.
 var ErrNotConnected = errors.New("not connected")
 
+// Link errors (specs/daemon.md "Linking").
+var (
+	// ErrLinkTimeout: WhatsApp's login window closed before the phone completed the link.
+	ErrLinkTimeout = errors.New("the link window closed before the phone completed the link")
+	// ErrWrongNumber: the phone that tried to complete the link is not the number the operator
+	// named. The pairing was refused.
+	ErrWrongNumber = errors.New("the phone that completed the link is not the number given to auth link; the pairing was refused")
+	// ErrOutdated: WhatsApp rejected the client as too old while linking.
+	ErrOutdated = errors.New("WhatsApp rejected the client as too old")
+)
+
+// LinkRequest starts a link: by pairing code for Phone (digits only, international form, no
+// leading "+"), or by QR code when QR is set.
+type LinkRequest struct {
+	Phone string
+	QR    bool
+}
+
+// LinkProgress is one step of a link attempt: a pairing code, or a QR payload.
+type LinkProgress struct {
+	Code string
+	QR   string
+}
+
+// PhoneMatches reports whether a pairing id (a phone-number id, possibly with a device suffix)
+// belongs to the phone number digits the operator named. It is the check behind security.md
+// rule 8, shared by the adapter and the fake.
+func PhoneMatches(digits, jid string) bool {
+	if digits == "" {
+		return true // QR linking names no number
+	}
+	user := jid
+	if i := strings.IndexByte(user, '@'); i >= 0 {
+		if user[i+1:] != "s.whatsapp.net" {
+			return false
+		}
+		user = user[:i]
+	}
+	if i := strings.IndexAny(user, ".:"); i >= 0 {
+		user = user[:i]
+	}
+	return user != "" && user == digits
+}
+
 // Client is the WhatsApp client the daemon drives.
 type Client interface {
 	// Start begins delivering events to h. It returns once delivery is set up.
@@ -148,4 +193,15 @@ type Client interface {
 	GroupInfo(ctx context.Context, chat string) (GroupInfo, error)
 	// MarkRead sends a read receipt for messages of one sender in one chat.
 	MarkRead(ctx context.Context, chat, sender string, ids []string, t time.Time) error
+	// SendPresence announces the account as available (specs/daemon.md "Presence").
+	SendPresence(ctx context.Context) error
+
+	// Link makes the client a linked device. It reports each pairing code or QR payload to
+	// progress as it happens and returns nil once the device is linked and connected, or one of
+	// ErrLinkTimeout, ErrWrongNumber, ErrOutdated or another error. Only valid without a
+	// session. While it runs the client emits no state changes; the daemon owns "linking".
+	Link(ctx context.Context, req LinkRequest, progress func(LinkProgress)) error
+	// Logout tells WhatsApp to remove this linked device, then deletes the session.
+	// ErrNotConnected when offline.
+	Logout(ctx context.Context) error
 }

@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"go.mau.fi/whatsmeow/store/sqlstore"
 	"golang.org/x/sys/unix"
 
 	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/client"
@@ -67,8 +68,9 @@ type Options struct {
 	Version string
 	Log     io.Writer
 	Level   slog.Level
-	// NewClient builds the WhatsApp client; nil uses the offline client.
-	NewClient func(hasSession bool) client.Client
+	// NewClient builds the WhatsApp client over the opened session store; nil uses the offline
+	// client. cmd/whatsapp-axid passes the whatsmeow adapter (client/wa).
+	NewClient func(session *sqlstore.Container, hasSession bool, log *slog.Logger) client.Client
 	// PeerUID overrides the kernel peer-credential lookup (tests).
 	PeerUID server.PeerUID
 	// Ready, when set, receives the account once the socket is listening.
@@ -145,7 +147,7 @@ func Run(ctx context.Context, o Options) error {
 	// 5. The state the session implies.
 	var cl client.Client
 	if o.NewClient != nil {
-		cl = o.NewClient(hasSession)
+		cl = o.NewClient(sess, hasSession, log)
 	} else {
 		cl = offline.New(hasSession)
 	}

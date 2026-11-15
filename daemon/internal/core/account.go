@@ -54,6 +54,9 @@ type Account struct {
 	since   time.Time
 
 	notify *notifier
+
+	linkMu  sync.Mutex
+	linking bool
 }
 
 // New builds an Account and records the client's initial state.
@@ -95,6 +98,9 @@ func (a *Account) Handle(ev client.Event) {
 	case client.StateChange:
 		if err := a.enterState(ctx, e.State, e.Reason, false); err != nil {
 			a.log.Error("recording a state change failed", "err", err)
+		}
+		if e.State == "connected" {
+			a.onConnected()
 		}
 	case client.PhoneActivity:
 		a.setMeta(ctx, "last_phone_activity", rfc3339(e.Time))

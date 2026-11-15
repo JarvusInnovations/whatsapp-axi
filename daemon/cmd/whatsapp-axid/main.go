@@ -13,6 +13,10 @@ import (
 	"strings"
 	"syscall"
 
+	"go.mau.fi/whatsmeow/store/sqlstore"
+
+	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/client"
+	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/client/wa"
 	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/runner"
 )
 
@@ -102,7 +106,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "whatsapp-axid run: --log-level must be debug, info, warn or error\n")
 		return 2
 	}
-	err := runner.Run(ctx, runner.Options{Account: *account, Version: version, Log: stderr, Level: lv})
+	err := runner.Run(ctx, runner.Options{
+		Account: *account, Version: version, Log: stderr, Level: lv,
+		NewClient: func(s *sqlstore.Container, _ bool, log *slog.Logger) client.Client { return wa.New(s, log) },
+	})
 	if err != nil {
 		fmt.Fprintf(stderr, "whatsapp-axid run: %v\n", err)
 		return 1

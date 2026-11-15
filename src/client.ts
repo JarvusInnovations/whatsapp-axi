@@ -49,8 +49,11 @@ function helpForCode(account: string, code: string, body: Json): string[] {
       return c.length ? [`Use one of: ${c.join(", ")}`] : [];
     }
     case "not_connected":
-    case "not_linked":
       return [`Run \`whatsapp-axi doctor --account ${account}\` to see the account's state`];
+    case "not_linked":
+      return [`Run \`whatsapp-axi auth link --phone <number> --account ${account}\` to link the account`];
+    case "link_in_progress":
+      return ["Wait for the running link attempt to end (it lasts at most about three minutes)"];
     case "internal":
       return [`Check the daemon's log; run \`whatsapp-axi doctor --account ${account}\``];
     default:
@@ -158,12 +161,29 @@ export class Daemon {
     return json;
   }
 
-  /** A streaming request: yields one parsed object per line until the stream or signal ends. */
-  async *stream(path: string, signal?: AbortSignal): AsyncGenerator<Json> {
+  /**
+   * A streaming request: yields one parsed object per line until the stream or signal ends. A
+   * stream the daemon closes is an error unless `endOk` (a stream with a final line, like link).
+   */
+  async *stream(path: string, signal?: AbortSignal, opts: { method?: string; body?: unknown; endOk?: boolean } = {}): AsyncGenerator<Json> {
     if (!this.checked) await this.status();
+    const payload = opts.body === undefined ? undefined : Buffer.from(JSON.stringify(opts.body));
     const res = await new Promise<import("node:http").IncomingMessage>((resolve, reject) => {
-      const req = request({ socketPath: this.socket, path, method: "GET", headers: { "User-Agent": `whatsapp-axi/${VERSION}` }, signal }, resolve);
+      const req = request(
+        {
+          socketPath: this.socket,
+          path,
+          method: opts.method ?? "GET",
+          headers: {
+            "User-Agent": `whatsapp-axi/${VERSION}`,
+            ...(payload ? { "Content-Type": "application/json", "Content-Length": payload.length } : {}),
+          },
+          signal,
+        },
+        resolve,
+      );
       req.on("error", (e: NodeJS.ErrnoException) => (e.name === "AbortError" ? resolve(null as never) : reject(connError(this.account, e))));
+      if (payload) req.write(payload);
       req.end();
     });
     if (!res) return;
@@ -201,7 +221,7 @@ export class Daemon {
       throw err;
     }
     if (buf.trim() && !signal?.aborted) throw badResponse(this.account, "a stream line is not JSON");
-    if (!signal?.aborted) {
+    if (!signal?.aborted && !opts.endOk) {
       throw failure(`The daemon of account ${this.account} closed the stream.`, "stream_closed", [`Run \`whatsapp-axi doctor --account ${this.account}\``]);
     }
   }
