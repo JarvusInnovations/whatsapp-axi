@@ -170,33 +170,39 @@ FROM chats c WHERE c.id=?`, id).Scan(&c.ID, &c.Name, &c.Type, &last, &c.Discarde
 }
 
 // Chats is GET /v1/chats: chats with kept content, most recently kept first.
-func (a *Account) Chats(ctx context.Context) ([]ChatSummary, error) {
+// Chats returns the chats with kept content, most recently kept first: at most limit of them
+// (0 for all), and how many there are in all.
+func (a *Account) Chats(ctx context.Context, limit int) ([]ChatSummary, int, error) {
 	rows, err := a.db.QueryContext(ctx, `SELECT id FROM chats c WHERE EXISTS (SELECT 1 FROM messages WHERE chat_id=c.id) ORDER BY coalesce(last_kept_at,0) DESC, id`)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, 0, err
 		}
 		ids = append(ids, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	total := len(ids)
+	if limit > 0 && len(ids) > limit {
+		ids = ids[:limit]
 	}
 	out := []ChatSummary{}
 	for _, id := range ids {
 		c, err := a.summary(ctx, a.db, id)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, c)
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // GroupSummary is one row of GET /v1/groups.
@@ -211,10 +217,11 @@ type GroupSummary struct {
 
 // Groups is GET /v1/groups: every group the account is a member of, kept content or not, asked
 // of WhatsApp now (scopes.md "Membership is not content"). Member lists are not stored.
-func (a *Account) Groups(ctx context.Context) ([]GroupSummary, error) {
+// At most limit groups are returned (0 for all), with how many there are in all.
+func (a *Account) Groups(ctx context.Context, limit int) ([]GroupSummary, int, error) {
 	gs, err := a.client.JoinedGroups(ctx)
 	if err != nil {
-		return nil, a.clientErr(err, "Listing groups")
+		return nil, 0, a.clientErr(err, "Listing groups")
 	}
 	s := a.Settings()
 	out := make([]GroupSummary, 0, len(gs))
@@ -222,7 +229,7 @@ func (a *Account) Groups(ctx context.Context) ([]GroupSummary, error) {
 		row := GroupSummary{ID: g.ID, Name: g.Name, Members: g.Members, Override: s.Chats[g.ID]}
 		row.Scope = scope.EffectiveScope(s.Scope, row.Override)
 		if err := a.db.QueryRowContext(ctx, `SELECT coalesce((SELECT n FROM discard_counters WHERE chat_key=?),0)`, g.ID).Scan(&row.Discarded); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, row)
 	}
@@ -232,7 +239,11 @@ func (a *Account) Groups(ctx context.Context) ([]GroupSummary, error) {
 		}
 		return out[i].ID < out[j].ID
 	})
-	return out, nil
+	total := len(out)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, total, nil
 }
 
 // Chat is GET /v1/chats/{chat}. A group the account is in but has kept nothing from is answered
@@ -337,9 +348,8 @@ type EventQuery struct {
 	Kind  string
 }
 
-// Events returns events matching q, oldest first. Without After it returns the most recent Limit
-// events.
-func (a *Account) Events(ctx context.Context, q EventQuery) ([]Event, error) {
+// eventWhere is the filter of q, without its limit.
+func eventWhere(q EventQuery) (string, []any) {
 	where := []string{"1=1"}
 	var args []any
 	if q.Chat != "" {
@@ -350,16 +360,33 @@ func (a *Account) Events(ctx context.Context, q EventQuery) ([]Event, error) {
 		where = append(where, "e.kind=?")
 		args = append(args, q.Kind)
 	}
-	order := "DESC"
 	if q.After != nil {
 		where = append(where, "e.seq>?")
 		args = append(args, *q.After)
+	}
+	return strings.Join(where, " AND "), args
+}
+
+// EventsTotal is how many events match q without its limit: after After when given, else all.
+func (a *Account) EventsTotal(ctx context.Context, q EventQuery) (int64, error) {
+	where, args := eventWhere(q)
+	var n int64
+	err := a.db.QueryRowContext(ctx, `SELECT count(*) FROM events e WHERE `+where, args...).Scan(&n)
+	return n, err
+}
+
+// Events returns events matching q, oldest first. Without After it returns the most recent Limit
+// events.
+func (a *Account) Events(ctx context.Context, q EventQuery) ([]Event, error) {
+	where, args := eventWhere(q)
+	order := "DESC"
+	if q.After != nil {
 		order = "ASC"
 	}
 	args = append(args, q.Limit)
 	rows, err := a.db.QueryContext(ctx, `SELECT e.seq, e.t, e.kind, e.payload, coalesce(c.id,''), coalesce(c.type,''), coalesce(c.name,'')
 FROM events e LEFT JOIN chats c ON c.id=e.chat_id
-WHERE `+strings.Join(where, " AND ")+` ORDER BY e.seq `+order+` LIMIT ?`, args...)
+WHERE `+where+` ORDER BY e.seq `+order+` LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -483,6 +510,9 @@ type MessagesPage struct {
 	Chat     ChatRef       `json:"chat"`
 	Messages []MessageView `json:"messages"`
 	More     bool          `json:"more"`
+	// Total is how many kept messages of the chat the request covers (before the given id, when
+	// one is given); len(Messages) of Total were returned.
+	Total int64 `json:"total"`
 	// MarkRead is what a mark_read request marked, and what it could not.
 	MarkRead *MarkOutcome `json:"mark_read,omitempty"`
 }
@@ -510,6 +540,10 @@ func (a *Account) Messages(ctx context.Context, chatRef, before string, limit in
 		cond = ` AND (ts < ? OR (ts = ? AND rowid < ?))`
 		args = append(args, ts, ts, rowid)
 	}
+	var total int64
+	if err := a.db.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE chat_id=?`+cond, args...).Scan(&total); err != nil {
+		return nil, err
+	}
 	args = append(args, limit+1)
 	rows, err := a.db.QueryContext(ctx, `SELECT `+messageColumns+` FROM messages WHERE chat_id=?`+cond+` ORDER BY ts DESC, rowid DESC LIMIT ?`, args...)
 	if err != nil {
@@ -528,7 +562,7 @@ func (a *Account) Messages(ctx context.Context, chatRef, before string, limit in
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	page := &MessagesPage{Chat: ChatRef{ID: sum.ID, Type: sum.Type, Name: sum.Name}, Messages: []MessageView{}}
+	page := &MessagesPage{Chat: ChatRef{ID: sum.ID, Type: sum.Type, Name: sum.Name}, Messages: []MessageView{}, Total: total}
 	if len(list) > limit {
 		page.More = true
 		list = list[:limit]

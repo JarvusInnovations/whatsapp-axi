@@ -157,6 +157,18 @@ describe("events", () => {
     expect(r.out.trim().split("\n").pop()).toBe("last_seq: 413");
   });
 
+  it("states its size and says when the limit cut it", async () => {
+    fake.route("GET /v1/events", () => ({ body: { events, latest_seq: 420, after: 410, total: 10 } }));
+    const r = await run(["events", "--after", "410", "--limit", "3"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("count: 3 of 10");
+    expect(r.out).toContain("The limit cut the list: 7 more after seq 413");
+    fake.route("GET /v1/events", () => ({ body: { events, latest_seq: 413, after: 410, total: 3 } }));
+    const r2 = await run(["events", "--after", "410"]);
+    expect(r2.out).toContain("count: 3 of 3");
+    expect(r2.out).not.toContain("limit cut");
+  });
+
   it("without --after says it shows the most recent", async () => {
     fake.route("GET /v1/events", ({ query }) => {
       expect(query.has("after")).toBe(false);
@@ -276,6 +288,35 @@ describe("events", () => {
     expect(lines).toHaveLength(3);
     expect(lines[1]).toContain("412,message");
     expect(result.last_seq).toBe(413);
+  });
+});
+
+describe("bounded lists", () => {
+  it("chats, groups and read take --limit, print N of M and say when the limit cut the list", async () => {
+    fake.route("GET /v1/chats", ({ query }) => {
+      expect(query.get("limit")).toBe("1");
+      return { body: { chats: [{ id: GROUP, name: "Example group", type: "group", scope: "tagged" }], total: 4 } };
+    });
+    let r = await run(["chats", "--limit", "1"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("count: 1 of 4");
+    expect(r.out).toContain("whatsapp-axi chats --limit 4");
+    fake.route("GET /v1/groups", ({ query }) => {
+      expect(query.get("limit")).toBe("1");
+      return { body: { groups: [{ id: GROUP, name: "Example group", scope: "tagged", members: 3 }], total: 2 } };
+    });
+    r = await run(["groups", "--limit", "1"]);
+    expect(r.out).toContain("count: 1 of 2");
+    expect(r.out).toContain("whatsapp-axi groups --limit 2");
+    fake.route("GET /v1/messages", () => ({ body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [MESSAGE], more: true, total: 9 } }));
+    r = await run(["read", GROUP, "--limit", "1"]);
+    expect(r.out).toContain("count: 1 of 9");
+    expect(r.out).toContain(`--before ${MESSAGE.id}`);
+    fake.route("GET /v1/chats", () => ({ body: { chats: [{ id: GROUP, name: "Example group", type: "group", scope: "tagged" }], total: 1 } }));
+    r = await run(["chats"]);
+    expect(r.out).toContain("count: 1 of 1");
+    expect(r.out).not.toContain("limit cut");
+    expect((await run(["chats", "--limit", "0"])).code).toBe(2);
   });
 });
 

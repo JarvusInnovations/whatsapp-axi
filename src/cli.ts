@@ -55,7 +55,7 @@ commands[20]:
   daemon start|stop|restart|status <name>, daemon logs <name> [--lines N] [--follow], daemon upgrade
   daemon run <name> (foreground)
   doctor [--account <name>]
-  chats, groups, chat view <chat>
+  chats [--limit N], groups [--limit N], chat view <chat>
   events [--after <seq>] [--limit N] [--chat <chat>] [--kind <kind>] [--follow] [--mark-read]
   read <chat> [--limit N] [--before <id>] [--mark-read]
   message view <ref> [--full]

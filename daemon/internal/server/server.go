@@ -255,30 +255,41 @@ func (s *Server) patchSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
-	if _, err := query(r); err != nil {
-		s.fail(w, err)
-		return
+// listLimit reads the optional limit of a list; absent is 0, every row.
+func listLimit(r *http.Request) (int, error) {
+	q, err := query(r, "limit")
+	if err != nil {
+		return 0, err
 	}
-	list, err := s.acct.Chats(r.Context())
+	return intParam(q, "limit", 0, 1, 10000)
+}
+
+func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
+	limit, err := listLimit(r)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"chats": list})
+	list, total, err := s.acct.Chats(r.Context(), limit)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"chats": list, "total": total})
 }
 
 func (s *Server) groups(w http.ResponseWriter, r *http.Request) {
-	if _, err := query(r); err != nil {
-		s.fail(w, err)
-		return
-	}
-	list, err := s.acct.Groups(r.Context())
+	limit, err := listLimit(r)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"groups": list})
+	list, total, err := s.acct.Groups(r.Context(), limit)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"groups": list, "total": total})
 }
 
 func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
@@ -434,7 +445,12 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, err)
 			return
 		}
-		res := map[string]any{"events": list, "latest_seq": last}
+		total, err := s.acct.EventsTotal(ctx, eq)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		res := map[string]any{"events": list, "latest_seq": last, "total": total}
 		if mark {
 			res["mark_read"] = s.acct.MarkReturned(ctx, core.EventRefs(list))
 		}
