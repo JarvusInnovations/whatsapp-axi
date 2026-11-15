@@ -4,6 +4,7 @@ package fake
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -37,6 +38,34 @@ type Client struct {
 	Linking LinkPlan
 	// LinkRequests records every Link request.
 	LinkRequests []client.LinkRequest
+
+	// Sending.
+	sent      []client.OutMessage
+	reactions []ReactCall
+	idSeq     int
+	inFlight  int
+	// Attempts counts Send and React calls that reached the fake while connected.
+	Attempts int
+	// MaxInFlight is the most sends or reactions that were ever in the client at once.
+	MaxInFlight int
+	// BeforeSend, when set, runs inside Send before it returns (to look at the store mid-send).
+	BeforeSend func(client.OutMessage)
+	// SendErr, when set, fails every Send and React.
+	SendErr error
+	// AddressAs, when set, is the chat id WhatsApp answers with (a phone-number send answered
+	// by hidden id, for example).
+	AddressAs map[string]string
+	// UploadKeys is the key material a file send returns.
+	UploadKeys []byte
+	// Files maps a media descriptor's keys to the file Download returns; DownloadErr fails it.
+	Files       map[string][]byte
+	DownloadErr error
+	Downloads   int
+}
+
+// ReactCall records one React.
+type ReactCall struct {
+	Chat, Sender, ID, Emoji string
 }
 
 // LinkPlan scripts a Link call of the fake.
@@ -249,6 +278,115 @@ func (c *Client) Logout(context.Context) error {
 	c.state, c.reason = "unlinked", "logged out by the operator"
 	c.mu.Unlock()
 	return nil
+}
+
+func (c *Client) NewMessageID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.idSeq++
+	return fmt.Sprintf("3EB0F0000000%06d", c.idSeq)
+}
+
+func (c *Client) enter() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state != "connected" {
+		return client.ErrNotConnected
+	}
+	c.inFlight++
+	c.Attempts++
+	if c.inFlight > c.MaxInFlight {
+		c.MaxInFlight = c.inFlight
+	}
+	return nil
+}
+
+func (c *Client) leave() {
+	c.mu.Lock()
+	c.inFlight--
+	c.mu.Unlock()
+}
+
+func (c *Client) Send(_ context.Context, m client.OutMessage) (client.SendResult, error) {
+	if err := c.enter(); err != nil {
+		return client.SendResult{}, err
+	}
+	defer c.leave()
+	if c.BeforeSend != nil {
+		c.BeforeSend(m)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.SendErr != nil {
+		return client.SendResult{}, c.SendErr
+	}
+	if m.File != nil {
+		m.File.Data = append([]byte(nil), m.File.Data...)
+	}
+	c.sent = append(c.sent, m)
+	res := client.SendResult{Chat: m.Chat, Sender: c.own.LID, Time: time.Date(2030, 1, 5, 15, 0, 0, 0, time.UTC)}
+	if res.Sender == "" {
+		res.Sender = c.own.PN
+	}
+	if v, ok := c.AddressAs[m.Chat]; ok {
+		res.Chat = v
+	}
+	if m.File != nil {
+		res.Media = &client.Media{Type: m.File.Type, MIME: m.File.MIME, Name: m.File.Name, Size: int64(len(m.File.Data)), Caption: m.Text, Keys: c.UploadKeys}
+	}
+	return res, nil
+}
+
+// AttemptCount returns Attempts under the lock.
+func (c *Client) AttemptCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.Attempts
+}
+
+// Sent returns the messages sent so far.
+func (c *Client) Sent() []client.OutMessage {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]client.OutMessage(nil), c.sent...)
+}
+
+func (c *Client) React(_ context.Context, chat, sender, id, emoji string) (client.SendResult, error) {
+	if err := c.enter(); err != nil {
+		return client.SendResult{}, err
+	}
+	defer c.leave()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.SendErr != nil {
+		return client.SendResult{}, c.SendErr
+	}
+	c.reactions = append(c.reactions, ReactCall{Chat: chat, Sender: sender, ID: id, Emoji: emoji})
+	return client.SendResult{Chat: chat, Time: time.Date(2030, 1, 5, 15, 0, 0, 0, time.UTC)}, nil
+}
+
+// Reactions returns the reactions sent so far.
+func (c *Client) Reactions() []ReactCall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]ReactCall(nil), c.reactions...)
+}
+
+func (c *Client) Download(_ context.Context, m *client.Media) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state != "connected" {
+		return nil, client.ErrNotConnected
+	}
+	c.Downloads++
+	if c.DownloadErr != nil {
+		return nil, c.DownloadErr
+	}
+	data, ok := c.Files[string(m.Keys)]
+	if !ok {
+		return nil, client.ErrNotDownloadable
+	}
+	return data, nil
 }
 
 // MarkReadCount returns how many MarkRead calls were made.

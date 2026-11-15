@@ -256,7 +256,7 @@ export const messageViewSpec: CommandSpec = {
   examples: ["whatsapp-axi message view 3EB0AAAA0000000001", "whatsapp-axi message view 120363000000000001@g.us/3EB0AAAA0000000001"],
 };
 
-function splitRef(ref: string): { chat: string; id: string } {
+export function splitRef(ref: string): { chat: string; id: string } {
   const i = ref.lastIndexOf("/");
   return i >= 0 ? { chat: ref.slice(0, i), id: ref.slice(i + 1) } : { chat: "", id: ref };
 }

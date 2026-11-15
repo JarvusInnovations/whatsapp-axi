@@ -56,6 +56,8 @@ type MessageView struct {
 	Edited     bool       `json:"edited,omitempty"`
 	Deleted    bool       `json:"deleted,omitempty"`
 	Reactions  []Reaction `json:"reactions,omitempty"`
+	// Status is set only for the account's own message that is not (yet) sent: pending or failed.
+	Status string `json:"status,omitempty"`
 }
 
 // ChatRef is the chat object carried on events.
@@ -125,6 +127,7 @@ type APIError struct {
 	Message    string   `json:"message"`
 	State      string   `json:"state,omitempty"`
 	Candidates []string `json:"candidates,omitempty"`
+	RetryAfter int      `json:"retry_after_seconds,omitempty"`
 }
 
 func (e *APIError) Error() string { return e.Code + ": " + e.Message }

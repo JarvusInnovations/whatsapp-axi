@@ -137,6 +137,41 @@ var (
 	ErrOutdated = errors.New("WhatsApp rejected the client as too old")
 )
 
+// ErrNotDownloadable: the media's server copy has expired or the descriptor cannot be fetched.
+var ErrNotDownloadable = errors.New("the media cannot be downloaded")
+
+// OutFile is a file to send.
+type OutFile struct {
+	Type      string // image, video, audio or document
+	MIME      string
+	Name      string // base name; recipients see it for a document
+	Data      []byte
+	Thumbnail []byte // a small JPEG preview, images only
+	Width     int
+	Height    int
+}
+
+// OutMessage is a message to send. ID is chosen by the daemon before sending. Text is the body,
+// or the caption when File is set.
+type OutMessage struct {
+	ID       string
+	Chat     string
+	Text     string
+	Mentions []string // ids in the form WhatsApp expects for the chat
+	// Reply quotes a kept message: its id, its sender exactly as stored, and its text. Never
+	// any media keys.
+	Reply *Quoted
+	File  *OutFile
+}
+
+// SendResult is what WhatsApp answered to a send.
+type SendResult struct {
+	Chat   string // the chat as WhatsApp addressed it, device-free
+	Sender string // the account's id the message went out as, device-free; may be empty
+	Time   time.Time
+	Media  *Media // for a file: the descriptor of the upload, with its key material
+}
+
 // LinkRequest starts a link: by pairing code for Phone (digits only, international form, no
 // leading "+"), or by QR code when QR is set.
 type LinkRequest struct {
@@ -204,4 +239,15 @@ type Client interface {
 	// Logout tells WhatsApp to remove this linked device, then deletes the session.
 	// ErrNotConnected when offline.
 	Logout(ctx context.Context) error
+
+	// NewMessageID returns a fresh message id for a message the account is about to send.
+	NewMessageID() string
+	// Send sends a message and returns once WhatsApp has accepted it. ErrNotConnected when offline.
+	Send(ctx context.Context, m OutMessage) (SendResult, error)
+	// React puts emoji on a message (empty removes the account's reaction). sender is the
+	// original sender exactly as stored, or "" for the account's own message.
+	React(ctx context.Context, chat, sender, id, emoji string) (SendResult, error)
+	// Download fetches and decrypts the file of a media descriptor. ErrNotDownloadable when its
+	// server copy has expired; ErrNotConnected when offline.
+	Download(ctx context.Context, m *Media) ([]byte, error)
 }

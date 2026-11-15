@@ -338,16 +338,19 @@ func (a *Account) LastSeq(ctx context.Context) (int64, error) {
 }
 
 const messageColumns = `id, sender_id, sender_lid, sender_pn, sender_name, from_me, operator, ts, text, kept_by,
-  partial, mentions_me, mentions, reply_id, reply_from, reply_text, media, ephemeral, edited, deleted, chat_id`
+  partial, mentions_me, mentions, reply_id, reply_from, reply_text, media, ephemeral, edited, deleted, chat_id, status`
 
 func scanMessage(sc interface{ Scan(...any) error }) (*MessageView, string, error) {
 	var v MessageView
 	var ts, eph int64
 	var fromMe, op, partial, mme, edited, deleted bool
-	var mentions, replyID, replyFrom, replyText, media, chat string
+	var mentions, replyID, replyFrom, replyText, media, chat, status string
 	if err := sc.Scan(&v.ID, &v.From.ID, &v.From.LID, &v.From.PN, &v.From.Name, &fromMe, &op, &ts, &v.Text, &v.KeptBy,
-		&partial, &mme, &mentions, &replyID, &replyFrom, &replyText, &media, &eph, &edited, &deleted, &chat); err != nil {
+		&partial, &mme, &mentions, &replyID, &replyFrom, &replyText, &media, &eph, &edited, &deleted, &chat, &status); err != nil {
 		return nil, "", err
+	}
+	if status == StatusPending || status == StatusFailed {
+		v.Status = status
 	}
 	v.From.Me, v.From.Operator = fromMe, op
 	v.T = rfc3339(fromMS(ts))
