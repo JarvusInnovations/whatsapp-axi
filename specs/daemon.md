@@ -109,6 +109,14 @@ read on WhatsApp only when a consumer marks it, in one of two ways:
   every incoming message returned by that request is marked
 - explicitly, for one message or for everything in a chat up to a message
 
+**A mark that was asked for and not sent is never reported as done.** Every answer to a mark,
+explicit or while reading, says how many messages were `marked`, how many were
+`already_marked`, and how many `failed`, with a `reason` when any were not sent: `off`
+(`read_receipts` is `off`), `not_connected`, or WhatsApp's error. A read that asked to mark still
+returns what it read. The CLI exits 1 after printing it when anything asked for was not marked,
+and names the fix. In a follow stream the daemon sends an `{"error": …}` line when a mark fails
+and keeps streaming.
+
 The daemon records that a message has been marked, so marking is idempotent and each message
 produces at most one read receipt. Reading without `mark_read` (a person debugging, a health
 check) marks nothing. The other values are `on-keep`, which marks a message the moment it is kept,
@@ -169,6 +177,10 @@ and is built later.
 
 ### Installing and upgrading the binary
 
+- `daemon install`, `daemon start` and `daemon restart` succeed only when the service is
+  active **and** the daemon answers on its socket afterwards; a unit that is failed or
+  restarting is exit 1 with the state and the log command. `daemon logs` fails, not prints an
+  empty log, when the journal cannot be read.
 - `daemon install` copies the daemon binary that came with the CLI to `<data>/bin/whatsapp-axid`,
   writes the unit, and enables and starts the service.
 - `daemon upgrade` copies the current binary over the installed one and restarts every installed
