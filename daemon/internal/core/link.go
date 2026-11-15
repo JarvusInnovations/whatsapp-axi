@@ -197,11 +197,46 @@ func (a *Account) onConnected() {
 	if !a.Settings().Presence {
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := a.client.SendPresence(ctx); err != nil && !errors.Is(err, client.ErrNotConnected) {
-			a.log.Warn("announcing presence failed", "err", err)
+	a.presMu.Lock()
+	a.presPending, a.presNoted = true, false
+	a.presMu.Unlock()
+	go a.announce()
+}
+
+// onPushNameReady retries an announcement that waited for the account's own name, which
+// WhatsApp delivers through app-state sync some time after connecting.
+func (a *Account) onPushNameReady() {
+	if !a.Settings().Presence {
+		return
+	}
+	go a.announce()
+}
+
+// announce sends presence once per connect. A failure for want of the account's name is
+// expected right after linking or starting; it is noted once per connect and retried when the
+// name arrives.
+func (a *Account) announce() {
+	a.presMu.Lock()
+	defer a.presMu.Unlock()
+	if !a.presPending {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := a.client.SendPresence(ctx)
+	switch {
+	case err == nil:
+		a.presPending = false
+		a.log.Info("announced presence")
+	case errors.Is(err, client.ErrNoPushName):
+		if !a.presNoted {
+			a.presNoted = true
+			a.log.Info("presence waits for the account's name to sync from the phone")
 		}
-	}()
+	case errors.Is(err, client.ErrNotConnected):
+		// The next connect tries again.
+	default:
+		a.presPending = false
+		a.log.Warn("announcing presence failed", "err", err)
+	}
 }

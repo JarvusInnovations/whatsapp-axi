@@ -55,7 +55,7 @@ func Default() Settings {
 		Operators:    []string{},
 		ParentBuffer: true,
 		Presence:     true,
-		ReadReceipts: "on-keep",
+		ReadReceipts: "on-read",
 		Send: Send{
 			FirstContact:  "refuse",
 			PerHour:       60,
@@ -229,7 +229,7 @@ func fromMap(m map[string]any) (Settings, error) {
 		}
 	}
 	if v, ok := m["read_receipts"]; ok {
-		if s.ReadReceipts, err = enum("read_receipts", v, "on-keep", "off"); err != nil {
+		if s.ReadReceipts, err = enum("read_receipts", v, "on-read", "on-keep", "off"); err != nil {
 			return s, err
 		}
 	}

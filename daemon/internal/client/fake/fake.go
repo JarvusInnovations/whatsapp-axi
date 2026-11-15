@@ -5,6 +5,7 @@ package fake
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -15,6 +16,12 @@ import (
 type MarkReadCall struct {
 	Chat, Sender string
 	IDs          []string
+}
+
+// TypingCall records one SendTyping.
+type TypingCall struct {
+	Chat string
+	On   bool
 }
 
 // Client is the fake.
@@ -28,11 +35,15 @@ type Client struct {
 	contacts map[string]string // id -> address-book name
 	groups   map[string]client.GroupInfo
 
-	MarkReads []MarkReadCall
-	Requested []string // ids passed to RequestMapping
-	Closed    bool
-	Presences int // SendPresence calls
-	LoggedOut bool
+	MarkReads   []MarkReadCall
+	typing      []TypingCall
+	Requested   []string // ids passed to RequestMapping
+	Closed      bool
+	Presences   int // SendPresence calls
+	JoinedCalls int // JoinedGroups calls
+	// NoPushName makes SendPresence fail with ErrNoPushName, as before app-state sync.
+	NoPushName bool
+	LoggedOut  bool
 
 	// Linking is what the next Link call does.
 	Linking LinkPlan
@@ -199,16 +210,59 @@ func (c *Client) GroupInfo(_ context.Context, chat string) (client.GroupInfo, er
 	}
 	g, ok := c.groups[chat]
 	if !ok {
-		return client.GroupInfo{}, client.ErrNotConnected
+		return client.GroupInfo{}, client.ErrNoGroup
 	}
 	return g, nil
+}
+
+// JoinedGroups lists every group set with SetGroup, ordered by id.
+func (c *Client) JoinedGroups(context.Context) ([]client.JoinedGroup, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state != "connected" {
+		return nil, client.ErrNotConnected
+	}
+	c.JoinedCalls++
+	out := []client.JoinedGroup{}
+	for id, g := range c.groups {
+		out = append(out, client.JoinedGroup{ID: id, Name: g.Name, Members: len(g.Participants)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 
 func (c *Client) MarkRead(_ context.Context, chat, sender string, ids []string, _ time.Time) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.state != "connected" {
+		return client.ErrNotConnected
+	}
 	c.MarkReads = append(c.MarkReads, MarkReadCall{Chat: chat, Sender: sender, IDs: append([]string(nil), ids...)})
 	return nil
+}
+
+func (c *Client) SendTyping(_ context.Context, chat string, on bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state != "connected" {
+		return client.ErrNotConnected
+	}
+	c.typing = append(c.typing, TypingCall{Chat: chat, On: on})
+	return nil
+}
+
+// Typing returns the SendTyping calls so far.
+func (c *Client) Typing() []TypingCall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]TypingCall(nil), c.typing...)
+}
+
+// MarkReadCalls returns the MarkRead calls so far.
+func (c *Client) MarkReadCalls() []MarkReadCall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]MarkReadCall(nil), c.MarkReads...)
 }
 
 func (c *Client) SendPresence(context.Context) error {
@@ -217,8 +271,18 @@ func (c *Client) SendPresence(context.Context) error {
 	if c.state != "connected" {
 		return client.ErrNotConnected
 	}
+	if c.NoPushName {
+		return client.ErrNoPushName
+	}
 	c.Presences++
 	return nil
+}
+
+// SetPushName ends (or starts) the fake's lack of a push name.
+func (c *Client) SetPushName(known bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.NoPushName = !known
 }
 
 // PresenceCount returns how many SendPresence calls succeeded.

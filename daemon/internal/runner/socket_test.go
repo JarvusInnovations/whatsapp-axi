@@ -361,7 +361,7 @@ func TestChatRequests(t *testing.T) {
 	if marks[ownLID] != [3]bool{true, false, false} || marks[samLID] != [3]bool{false, true, true} || marks[alexLID] != [3]bool{false, false, false} {
 		t.Fatalf("participants: %+v", cv.Chat.Participants)
 	}
-	d.wantError("GET", "/v1/chats/"+url.PathEscape(group2), nil, 404, "not_found")
+	d.wantError("GET", "/v1/chats/"+url.PathEscape(group2), nil, 404, "not_found") // not a member, nothing kept
 	d.wantError("GET", "/v1/chats/bogus", nil, 400, "bad_request")
 	d.wantError("GET", "/v1/chats?x=1", nil, 400, "bad_request")
 	d.fake.Emit(client.StateChange{State: "connecting", Reason: "connection lost"})
@@ -566,4 +566,69 @@ func TestListenRefusesLooseSocketDirectory(t *testing.T) {
 	if _, err := Listen(l); err == nil || !strings.Contains(err.Error(), "not a socket") {
 		t.Fatalf("got %v", err)
 	}
+}
+
+// scopes.md "Membership is not content": every group the account is in is listed, kept content or
+// not, and a group with nothing kept can be viewed. Nothing about membership is stored.
+func TestGroupsAndMembership(t *testing.T) {
+	e := newEnv(t)
+	e.init()
+	d := e.start(startOpts{})
+	d.fake.SetGroup(group, client.GroupInfo{Name: "Kept group", Participants: []client.Participant{
+		{JID: ownLID, LID: ownLID, PN: ownPN}, {JID: samLID, LID: samLID, PN: samPN},
+	}})
+	d.fake.SetGroup(group2, client.GroupInfo{Name: "Quiet group", Participants: []client.Participant{
+		{JID: ownLID, LID: ownLID, PN: ownPN}, {JID: samLID, LID: samLID, PN: samPN}, {JID: alexLID, LID: alexLID},
+	}})
+	d.fake.AddContact(samLID, "Sam Example")
+	d.patch(`{"operators":["+15550100001"],"chats":{"` + group2 + `":"none"}}`)
+	d.emit(msg("@Example hi", mention))
+	d.emit(msg("plain", func(m *client.Message) { m.Chat = group2 }))
+
+	var res struct {
+		Groups []core.GroupSummary `json:"groups"`
+	}
+	d.get("/v1/groups", &res)
+	if len(res.Groups) != 2 {
+		t.Fatalf("groups: %+v", res.Groups)
+	}
+	kept, quiet := res.Groups[0], res.Groups[1]
+	if kept.ID != group || kept.Name != "Kept group" || kept.Scope != "tagged" || kept.Members != 2 || kept.Discarded != 0 {
+		t.Fatalf("kept group: %+v", kept)
+	}
+	if quiet.ID != group2 || quiet.Name != "Quiet group" || quiet.Scope != "none" || quiet.Override != "none" || quiet.Members != 3 || quiet.Discarded != 1 {
+		t.Fatalf("group with nothing kept: %+v", quiet)
+	}
+
+	// chat view of a group with nothing kept: name and participants with their marks.
+	var cv struct {
+		Chat core.ChatDetail `json:"chat"`
+	}
+	d.get("/v1/chats/"+url.PathEscape(group2), &cv)
+	if cv.Chat.Name != "Quiet group" || cv.Chat.Type != "group" || cv.Chat.Scope != "none" || cv.Chat.Messages != 0 || cv.Chat.LastKept != nil || len(cv.Chat.Participants) != 3 {
+		t.Fatalf("chat view: %+v", cv.Chat)
+	}
+	for _, p := range cv.Chat.Participants {
+		if p.ID == samLID && (!p.Operator || p.Contact == nil || !*p.Contact) || p.ID == ownLID && !p.Me {
+			t.Fatalf("marks: %+v", p)
+		}
+	}
+	// A group the account is not in, with nothing kept, is not found.
+	d.wantError("GET", "/v1/chats/"+url.PathEscape("120363000000000009@g.us"), nil, 404, "not_found")
+
+	// Nothing about membership is stored: no chat row appears for the quiet group.
+	var chats struct {
+		Chats []core.ChatSummary `json:"chats"`
+	}
+	d.get("/v1/chats", &chats)
+	if len(chats.Chats) != 1 || chats.Chats[0].ID != group {
+		t.Fatalf("chats: %+v", chats.Chats)
+	}
+
+	d.wantError("GET", "/v1/groups?x=1", nil, 400, "bad_request")
+	d.fake.Emit(client.StateChange{State: "connecting", Reason: "connection lost"})
+	if e := d.wantError("GET", "/v1/groups", nil, 409, "not_connected"); e["state"] != "connecting" {
+		t.Fatalf("offline: %v", e)
+	}
+	d.wantError("GET", "/v1/chats/"+url.PathEscape(group2), nil, 409, "not_connected")
 }

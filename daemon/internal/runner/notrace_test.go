@@ -121,6 +121,7 @@ func leavesNoTrace(t *testing.T, phase string) {
 	d.patch(`{"presence":true}`)
 	d.get("/v1/chats", nil)
 	d.get("/v1/chats/"+esc, nil)
+	d.get("/v1/groups", nil)
 	d.do("GET", "/v1/chats/"+url.PathEscape(caseyLID), nil)
 	d.get("/v1/events", nil)
 	d.get("/v1/events?after=0&limit=1000", nil)

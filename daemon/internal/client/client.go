@@ -98,7 +98,11 @@ type PhoneActivity struct {
 	Time time.Time
 }
 
-// Event is one of *Message, StateChange or PhoneActivity.
+// PushNameReady reports that the account's own display name is known to the library, after
+// app-state sync. Presence cannot be announced before it.
+type PushNameReady struct{}
+
+// Event is one of *Message, StateChange, PhoneActivity or PushNameReady.
 type Event any
 
 // Handler receives events. The client calls it from one goroutine at a time.
@@ -117,6 +121,13 @@ type GroupInfo struct {
 	Participants []Participant
 }
 
+// JoinedGroup is one group the account is a member of, as WhatsApp reports it at request time.
+type JoinedGroup struct {
+	ID      string
+	Name    string
+	Members int
+}
+
 // Own is the account's own pair of ids, device-free. Either may be empty.
 type Own struct {
 	PN  string
@@ -125,6 +136,10 @@ type Own struct {
 
 // ErrNotConnected is returned by calls that need a live connection.
 var ErrNotConnected = errors.New("not connected")
+
+// ErrNoPushName: presence cannot be announced until the account's own name has synced from the
+// phone. The client emits PushNameReady when it has.
+var ErrNoPushName = errors.New("the account's name has not synced yet")
 
 // Link errors (specs/daemon.md "Linking").
 var (
@@ -136,6 +151,9 @@ var (
 	// ErrOutdated: WhatsApp rejected the client as too old while linking.
 	ErrOutdated = errors.New("WhatsApp rejected the client as too old")
 )
+
+// ErrNoGroup: no such group, or the account is not a member of it.
+var ErrNoGroup = errors.New("no such group, or the account is not a member")
 
 // ErrNotDownloadable: the media's server copy has expired or the descriptor cannot be fetched.
 var ErrNotDownloadable = errors.New("the media cannot be downloaded")
@@ -224,10 +242,16 @@ type Client interface {
 	RequestMapping(ctx context.Context, id string)
 	// Contact returns the address-book name of a user and whether the user is a contact.
 	Contact(ctx context.Context, id string) (name string, isContact bool)
-	// GroupInfo returns a group's name and participants. ErrNotConnected when offline.
+	// GroupInfo returns a group's name and participants. ErrNotConnected when offline, ErrNoGroup
+	// for a group the account is not in.
 	GroupInfo(ctx context.Context, chat string) (GroupInfo, error)
+	// JoinedGroups asks WhatsApp for every group the account is a member of. ErrNotConnected
+	// when offline. Nothing is stored.
+	JoinedGroups(ctx context.Context) ([]JoinedGroup, error)
 	// MarkRead sends a read receipt for messages of one sender in one chat.
 	MarkRead(ctx context.Context, chat, sender string, ids []string, t time.Time) error
+	// SendTyping turns the typing indicator on or off in a chat.
+	SendTyping(ctx context.Context, chat string, on bool) error
 	// SendPresence announces the account as available (specs/daemon.md "Presence").
 	SendPresence(ctx context.Context) error
 

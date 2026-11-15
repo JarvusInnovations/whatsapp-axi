@@ -294,7 +294,7 @@ func newAdapter(t *testing.T, logw *bytes.Buffer) *Client {
 	if has {
 		t.Fatal("new session.db has a device")
 	}
-	return New(c, log)
+	return New(c, false, log)
 }
 
 // TestRequiredLibrarySettings asserts every setting scopes.md requires, on the client the adapter
@@ -354,6 +354,9 @@ func TestRequiredLibrarySettings(t *testing.T) {
 	if _, err := a.GroupInfo(context.Background(), group.String()); err != client.ErrNotConnected {
 		t.Fatal(err)
 	}
+	if _, err := a.JoinedGroups(context.Background()); err != client.ErrNotConnected {
+		t.Fatal(err)
+	}
 	if err := a.MarkRead(context.Background(), group.String(), samLID.String(), []string{"x"}, time.Now()); err != client.ErrNotConnected {
 		t.Fatal(err)
 	}
@@ -373,6 +376,10 @@ func TestGroupInfoAndContactNames(t *testing.T) {
 	if g.Name != "Example group" || g.Participants[0].LID != samLID.String() || g.Participants[0].PN != samPN.String() || g.Participants[1].PN != "15550100003@s.whatsapp.net" {
 		t.Fatalf("%+v", g)
 	}
+	j := joinedGroups([]*types.GroupInfo{nil, {JID: group, GroupName: types.GroupName{Name: "Example group"}, Participants: []types.GroupParticipant{{JID: samLID}, {JID: alexLID}}}})
+	if len(j) != 1 || j[0] != (client.JoinedGroup{ID: group.String(), Name: "Example group", Members: 2}) {
+		t.Fatalf("%+v", j)
+	}
 	if n, ok := addressBookName(types.ContactInfo{Found: true, PushName: "Self"}); ok || n != "" {
 		t.Fatal("a push name alone is not a contact")
 	}
@@ -382,3 +389,96 @@ func TestGroupInfoAndContactNames(t *testing.T) {
 }
 
 var waWebMsg = waWeb.WebMessageInfo{}
+
+// The live run after a link by pairing code: the library reconnects as the new device and its
+// Connected arrives while the link is still finishing; the link ends connected; then the pairing
+// socket's Disconnected arrives, last. The state must stay connected, because the connection is
+// up. A Disconnected while the connection is really down still reports connecting, and every
+// later Connected is reported.
+func TestPairingDisconnectAfterConnected(t *testing.T) {
+	var logw bytes.Buffer
+	a := newAdapter(t, &logw)
+	var got []client.StateChange
+	if err := a.Start(context.Background(), func(e client.Event) {
+		if sc, ok := e.(client.StateChange); ok {
+			got = append(got, sc)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	live := true
+	a.mu.Lock()
+	a.live = func() bool { return live }
+	a.linking = true
+	a.mu.Unlock()
+
+	a.onEvent(&events.Connected{}) // the new device's socket, during the link
+	a.endLink(nil, true)           // the link reports success
+	a.onEvent(&events.Disconnected{})
+	if st, _ := a.State(); st != "connected" || len(got) != 1 || got[0].State != "connected" {
+		t.Fatalf("state %s, events %+v", st, got)
+	}
+
+	live = false
+	a.onEvent(&events.Disconnected{})
+	if st, why := a.State(); st != "connecting" || why != reasonConnectionLost {
+		t.Fatalf("a real disconnect: %s %s", st, why)
+	}
+	a.onEvent(&events.Connected{}) // stale: the socket is already gone
+	if st, _ := a.State(); st != "connecting" {
+		t.Fatal("a stale Connected must not report connected")
+	}
+	live = true
+	a.onEvent(&events.Connected{})
+	if st, _ := a.State(); st != "connected" || got[len(got)-1].State != "connected" {
+		t.Fatalf("a later Connected is reported: %+v", got)
+	}
+	if len(got) != 3 {
+		t.Fatalf("events %+v", got)
+	}
+}
+
+// With a session, the first state is the one the session implies, never "unlinked".
+func TestInitialStateFollowsTheSession(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	c, _, err := session.Open(context.Background(), filepath.Join(t.TempDir(), "session.db"), log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if st, why := New(c, true, log).State(); st != "connecting" || why != "starting" {
+		t.Fatalf("with a session: %s (%s)", st, why)
+	}
+	if st, _ := New(c, false, log).State(); st != "unlinked" {
+		t.Fatalf("without a session: %s", st)
+	}
+}
+
+// The account's own name arriving through app-state sync is reported only once the library has
+// it.
+func TestPushNameReady(t *testing.T) {
+	for _, ev := range []any{&events.PushNameSetting{}, &events.AppStateSyncComplete{}} {
+		if evs := Translate(ev, own); len(evs) != 1 || evs[0] != (client.PushNameReady{}) {
+			t.Fatalf("%T: %+v", ev, evs)
+		}
+	}
+	var logw bytes.Buffer
+	a := newAdapter(t, &logw)
+	var got []client.Event
+	if err := a.Start(context.Background(), func(e client.Event) { got = append(got, e) }); err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	a.onEvent(&events.AppStateSyncComplete{})
+	if len(got) != 0 {
+		t.Fatalf("no name yet: %+v", got)
+	}
+	a.mu.Lock()
+	a.device.PushName = "Example"
+	a.mu.Unlock()
+	a.onEvent(&events.AppStateSyncComplete{})
+	if len(got) != 1 {
+		t.Fatalf("name known: %+v", got)
+	}
+}

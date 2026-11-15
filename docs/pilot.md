@@ -7,10 +7,12 @@ volume small. Every id below is invented; `example` is the account's local name.
 ## 1. Build
 
 ```sh
-cd daemon && CGO_ENABLED=0 go build -o bin/whatsapp-axid ./cmd/whatsapp-axid && cd ..
-npm ci && npm run build
+npm ci && npm run build:daemon && npm run build
 alias whatsapp-axi="node $PWD/dist/bin/whatsapp-axi.js"
 ```
+
+`build:daemon` stamps the daemon with the version in `package.json`; a plain `go build` reports
+`0.0.0-dev`, and `doctor` then warns that the versions disagree.
 
 ## 2. Create the account and run it as a service
 

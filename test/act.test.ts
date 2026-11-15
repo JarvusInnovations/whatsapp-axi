@@ -151,3 +151,62 @@ describe("download", () => {
     }
   });
 });
+
+describe("mark-read", () => {
+  it("marks one message by ref", async () => {
+    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 1, already_marked: 0, read_receipts: "on-read" } }));
+    const r = await run(["mark-read", `${GROUP}/3EB0AAAA0000000001`]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("read: 1");
+    expect(body("/v1/mark-read")).toEqual({ chat: GROUP, id: "3EB0AAAA0000000001" });
+  });
+
+  it("marks everything kept in a chat through its newest message", async () => {
+    fake.route("GET /v1/messages", ({ query }) => {
+      expect(query.get("limit")).toBe("1");
+      return { body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [{ id: "3EB0AAAA0000000009", from: {} }], more: true } };
+    });
+    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 3, already_marked: 2, read_receipts: "on-read" } }));
+    const r = await run(["mark-read", "--chat", GROUP]);
+    expect(r.code, r.out).toBe(0);
+    expect(body("/v1/mark-read")).toEqual({ chat: GROUP, through: "3EB0AAAA0000000009" });
+    expect(r.out).toContain("already_marked: 2");
+  });
+
+  it("says so for a no-op and for read_receipts off", async () => {
+    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 0, already_marked: 1, read_receipts: "on-read" } }));
+    let r = await run(["mark-read", "3EB0AAAA0000000001"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("no-op");
+    expect(body("/v1/mark-read")).toEqual({ id: "3EB0AAAA0000000001" });
+    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 0, already_marked: 0, read_receipts: "off" } }));
+    r = await run(["mark-read", "3EB0AAAA0000000001"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("read_receipts is off");
+  });
+
+  it("needs a ref or --chat, not both, and passes errors through", async () => {
+    expect((await run(["mark-read"])).code).toBe(2);
+    expect((await run(["mark-read", "3EB0AAAA0000000001", "--chat", GROUP])).code).toBe(2);
+    fake.route("POST /v1/mark-read", () => apiError(409, "not_connected", "Marking read needs a live connection to WhatsApp; the account is connecting.", { state: "connecting" }));
+    const r = await run(["mark-read", "3EB0AAAA0000000001"]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("code: not_connected");
+  });
+});
+
+describe("typing", () => {
+  it("turns typing on and off", async () => {
+    fake.route("POST /v1/typing", () => ({ body: { chat: GROUP, typing: true, changed: true } }));
+    let r = await run(["typing", GROUP]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("two minutes");
+    expect(body("/v1/typing")).toEqual({ chat: GROUP, on: true });
+    fake.seen.length = 0;
+    fake.route("POST /v1/typing", () => ({ body: { chat: GROUP, typing: false, changed: false } }));
+    r = await run(["typing", GROUP, "--stop"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("no-op");
+    expect(body("/v1/typing")).toEqual({ chat: GROUP, on: false });
+  });
+});

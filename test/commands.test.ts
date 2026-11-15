@@ -196,6 +196,32 @@ describe("events", () => {
     expect(r.out).toContain("code: not_found");
   });
 
+  it("passes --mark-read and shows how many were marked", async () => {
+    fake.route("GET /v1/events", ({ query }) => {
+      expect(query.get("mark_read")).toBe("1");
+      return { body: { events, latest_seq: 413, after: 410, marked_read: 1 } };
+    });
+    const r = await run(["events", "--after", "410", "--mark-read"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("marked_read: 1");
+    expect(r.out.trim().split("\n").pop()).toBe("last_seq: 413");
+    fake.route("GET /v1/messages", ({ query }) => {
+      expect(query.get("mark_read")).toBe("1");
+      return { body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [MESSAGE], more: false, marked_read: 1 } };
+    });
+    const r2 = await run(["read", GROUP, "--mark-read"]);
+    expect(r2.code).toBe(0);
+    expect(r2.out).toContain("marked_read: 1");
+  });
+
+  it("without --mark-read asks for no marking", async () => {
+    fake.route("GET /v1/events", ({ query }) => {
+      expect(query.has("mark_read")).toBe(false);
+      return { body: { events, latest_seq: 413 } };
+    });
+    expect((await run(["events"])).code).toBe(0);
+  });
+
   it("follows a stream, line by line", async () => {
     fake.route("GET /v1/events", ({ query }) => {
       expect(query.get("follow")).toBe("1");
@@ -213,6 +239,35 @@ describe("events", () => {
     expect(lines).toHaveLength(3);
     expect(lines[1]).toContain("412,message");
     expect(result.last_seq).toBe(413);
+  });
+});
+
+describe("groups", () => {
+  const GROUPS = [
+    { id: GROUP, name: "Example group", scope: "tagged", members: 5, discarded: 12 },
+    { id: "120363000000000002@g.us", name: "Quiet group", scope: "none", override: "none", members: 3, discarded: 0 },
+  ];
+
+  it("lists every group with four columns, discard count on --fields", async () => {
+    fake.route("GET /v1/groups", () => ({ body: { groups: GROUPS } }));
+    let r = await run(["groups"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("groups[2]{id,name,scope,members}:");
+    expect(r.out).toContain("Quiet group,none,3");
+    r = await run(["groups", "--fields", "discarded"]);
+    expect(r.out).toContain("groups[2]{id,name,scope,members,discarded}:");
+    expect(r.out).toContain("tagged,5,12");
+  });
+
+  it("says so when there are none, and passes not_connected through", async () => {
+    fake.route("GET /v1/groups", () => ({ body: { groups: [] } }));
+    let r = await run(["groups"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("0 groups");
+    fake.route("GET /v1/groups", () => apiError(409, "not_connected", "Listing groups needs a live connection to WhatsApp; the account is connecting.", { state: "connecting" }));
+    r = await run(["groups"]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("code: not_connected");
   });
 });
 

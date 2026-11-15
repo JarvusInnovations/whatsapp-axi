@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -327,5 +328,40 @@ func TestPresenceSetting(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if n := fc.PresenceCount(); n != 2 {
 		t.Fatalf("presence off still announced: %d", n)
+	}
+}
+
+// Right after linking or starting, the library cannot announce presence until the account's own
+// name has synced from the phone. The daemon notes that once per connect, without a warning, and
+// announces when the name arrives.
+func TestPresenceWaitsForPushName(t *testing.T) {
+	e := newEnv(t)
+	e.init()
+	fc := fake.New("connecting", client.Own{PN: ownPN, LID: ownLID})
+	fc.NoPushName = true
+	e.start(startOpts{fake: fc})
+	fc.Emit(client.StateChange{State: "connected"})
+	waitFor(t, func() bool { return bytes.Contains(e.log.Bytes(), []byte("presence waits")) })
+	// A sync that brings no name yet fails again, quietly.
+	fc.Emit(client.PushNameReady{})
+	time.Sleep(50 * time.Millisecond)
+	if fc.PresenceCount() != 0 {
+		t.Fatal("announced without a name")
+	}
+	fc.SetPushName(true)
+	fc.Emit(client.PushNameReady{})
+	waitFor(t, func() bool { return fc.PresenceCount() == 1 })
+	// Once announced, a later sync does not announce again.
+	fc.Emit(client.PushNameReady{})
+	time.Sleep(50 * time.Millisecond)
+	if n := fc.PresenceCount(); n != 1 {
+		t.Fatalf("announced %d times in one connect", n)
+	}
+	log := e.log.Bytes()
+	if n := bytes.Count(log, []byte("presence waits")); n != 1 {
+		t.Fatalf("the wait is noted once per connect, got %d", n)
+	}
+	if bytes.Contains(log, []byte("announcing presence failed")) || bytes.Contains(log, []byte("level=WARN")) {
+		t.Fatalf("the expected first failure is not a warning:\n%s", log)
 	}
 }
