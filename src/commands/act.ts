@@ -1,4 +1,4 @@
-// send, send-file, react and download (specs/cli.md "Acting", specs/sending.md). The daemon
+// send, send-file, react, download, mark-read and typing (specs/cli.md "Acting", specs/sending.md). The daemon
 // enforces the send limits; the CLI validates its flags, passes the request on, and renders the
 // answer or the daemon's error with its fix.
 import { readFileSync } from "node:fs";
@@ -159,4 +159,69 @@ export async function download(ctx: Ctx, args: string[]): Promise<unknown> {
   const res = await d.call("POST", "/v1/download", body);
   expect(d, typeof res.path === "string", "download answer is missing fields");
   return { download: { path: res.path, name: res.name ?? "", mime: res.mime ?? null, size: res.size ?? null, existing: res.existing === true } };
+}
+
+// ---- mark-read -------------------------------------------------------------
+
+export const markReadSpec: CommandSpec = {
+  name: "mark-read",
+  summary: "Mark one kept message read, or with --chat everything kept in a chat (sends read receipts)",
+  positionals: [{ name: "ref", required: false, desc: "<id> or <chat>/<id>" }],
+  flags: { account: ACCOUNT, chat: { type: "string", value: "<chat>", desc: "mark everything kept in this chat instead of one message" } },
+  examples: ["whatsapp-axi mark-read 120363000000000001@g.us/3EB0AAAA0000000001", "whatsapp-axi mark-read --chat 120363000000000001@g.us"],
+};
+
+export async function markRead(ctx: Ctx, args: string[]): Promise<unknown> {
+  const p = parse(markReadSpec, args);
+  const ref = p.pos[0];
+  const chatFlag = p.flags.chat as string | undefined;
+  if ((ref === undefined) === (chatFlag === undefined)) throw usage("give a message <ref> or --chat <chat>, not both", ["whatsapp-axi mark-read <chat>/<id>", "whatsapp-axi mark-read --chat <chat>"]);
+  const account = chooseAccount(ctx, p.flags.account, "mark-read");
+  const d = ctx.daemon(account);
+  const body: Obj = {};
+  if (ref !== undefined) {
+    const { chat, id } = splitRef(ref);
+    if (!id) throw usage(`${JSON.stringify(ref)} is not a message ref: use <id> or <chat>/<id>`);
+    body.id = id;
+    if (chat) body.chat = chat;
+  } else {
+    // Everything kept in the chat: up to and including its newest kept message.
+    const page = await d.call("GET", `/v1/messages?chat=${encodeURIComponent(chatFlag as string)}&limit=1`);
+    const chat = page.chat as Obj | undefined;
+    expect(d, chat && typeof chat.id === "string" && Array.isArray(page.messages), "messages is missing fields");
+    const last = (page.messages as Obj[])[0];
+    if (!last) return { marked: `0 kept messages in ${chat.id as string}; nothing to mark (no-op)` };
+    body.chat = chat.id;
+    body.through = last.id;
+  }
+  const res = await d.call("POST", "/v1/mark-read", body);
+  expect(d, typeof res.chat === "string" && typeof res.marked === "number", "mark-read answer is missing fields");
+  if (res.read_receipts === "off") {
+    return { marked: "read_receipts is off; no read receipt sent (no-op)", help: [`Run \`whatsapp-axi settings set read_receipts on-read${acctFlag(ctx, account)}\` to send them`] };
+  }
+  const already = typeof res.already_marked === "number" ? res.already_marked : 0;
+  if (res.marked === 0) return { marked: `nothing new in ${res.chat as string}${already ? `; ${already} already marked read` : ""} (no-op)` };
+  return { marked: { chat: res.chat, read: res.marked, already_marked: already } };
+}
+
+// ---- typing ----------------------------------------------------------------
+
+export const typingSpec: CommandSpec = {
+  name: "typing",
+  summary: "Show the account as typing in a chat; clears on --stop, on a send to the chat, or after two minutes",
+  positionals: [{ name: "chat", required: true, desc: "group id, hidden id, phone-number id or +phone" }],
+  flags: { account: ACCOUNT, stop: { type: "bool", desc: "clear the typing indicator" } },
+  examples: ["whatsapp-axi typing 120363000000000001@g.us", "whatsapp-axi typing 120363000000000001@g.us --stop"],
+};
+
+export async function typing(ctx: Ctx, args: string[]): Promise<unknown> {
+  const p = parse(typingSpec, args);
+  const on = p.flags.stop !== true;
+  const account = chooseAccount(ctx, p.flags.account, "typing");
+  const d = ctx.daemon(account);
+  const res = await d.call("POST", "/v1/typing", { chat: p.pos[0], on });
+  expect(d, typeof res.chat === "string" && typeof res.typing === "boolean", "typing answer is missing fields");
+  const chat = res.chat as string;
+  if (on) return { typing: `on in ${chat}; clears on a send to the chat, on --stop, or after two minutes` };
+  return { typing: res.changed ? `off in ${chat}` : `not on in ${chat} (no-op)` };
 }

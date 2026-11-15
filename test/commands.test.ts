@@ -196,6 +196,32 @@ describe("events", () => {
     expect(r.out).toContain("code: not_found");
   });
 
+  it("passes --mark-read and shows how many were marked", async () => {
+    fake.route("GET /v1/events", ({ query }) => {
+      expect(query.get("mark_read")).toBe("1");
+      return { body: { events, latest_seq: 413, after: 410, marked_read: 1 } };
+    });
+    const r = await run(["events", "--after", "410", "--mark-read"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("marked_read: 1");
+    expect(r.out.trim().split("\n").pop()).toBe("last_seq: 413");
+    fake.route("GET /v1/messages", ({ query }) => {
+      expect(query.get("mark_read")).toBe("1");
+      return { body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [MESSAGE], more: false, marked_read: 1 } };
+    });
+    const r2 = await run(["read", GROUP, "--mark-read"]);
+    expect(r2.code).toBe(0);
+    expect(r2.out).toContain("marked_read: 1");
+  });
+
+  it("without --mark-read asks for no marking", async () => {
+    fake.route("GET /v1/events", ({ query }) => {
+      expect(query.has("mark_read")).toBe(false);
+      return { body: { events, latest_seq: 413 } };
+    });
+    expect((await run(["events"])).code).toBe(0);
+  });
+
   it("follows a stream, line by line", async () => {
     fake.route("GET /v1/events", ({ query }) => {
       expect(query.get("follow")).toBe("1");

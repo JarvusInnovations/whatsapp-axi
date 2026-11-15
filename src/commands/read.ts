@@ -119,9 +119,10 @@ export const eventsSpec: CommandSpec = {
     chat: { type: "string", value: "<chat>", desc: "only this chat" },
     kind: { type: "string", value: "<kind>", desc: `only this kind: ${KINDS.join(", ")}` },
     follow: { type: "bool", desc: "keep printing new events as they are kept" },
+    "mark-read": { type: "bool", desc: "send read receipts for the incoming messages returned" },
     fields: { type: "string", value: "<list>", desc: "add columns: t, id, from, kept_by, mentions_me" },
   },
-  examples: ["whatsapp-axi events --after 412", "whatsapp-axi events --kind message --limit 20", "whatsapp-axi events --after 412 --follow"],
+  examples: ["whatsapp-axi events --after 412", "whatsapp-axi events --kind message --limit 20", "whatsapp-axi events --after 412 --follow --mark-read"],
 };
 
 function eventRow(e: Obj): Obj {
@@ -169,7 +170,7 @@ export async function events(ctx: Ctx, args: string[], write: (s: string) => voi
   const d = ctx.daemon(account);
   const keys = ["seq", "kind", "chat", "detail", ...fields];
   const after = p.flags.after as number | undefined;
-  const query = { after, limit, chat: p.flags.chat as string | undefined, kind: p.flags.kind as string | undefined };
+  const query = { after, limit, chat: p.flags.chat as string | undefined, kind: p.flags.kind as string | undefined, mark_read: p.flags["mark-read"] ? 1 : undefined };
 
   if (p.flags.follow) {
     let last = after ?? null;
@@ -196,6 +197,7 @@ export async function events(ctx: Ctx, args: string[], write: (s: string) => voi
     out.help = [`Run \`whatsapp-axi events --after ${lastSeq}${af}\` for what comes next`, `Run \`whatsapp-axi message view <chat>/<id>${af}\` for a message in full`];
   }
   if (list.length === 0) out.help = [`Run \`whatsapp-axi events --after ${lastSeq} --follow${af}\` to wait for new events`];
+  if (typeof res.marked_read === "number") out.marked_read = res.marked_read;
   out.last_seq = lastSeq;
   return out;
 }
@@ -210,6 +212,7 @@ export const readSpec: CommandSpec = {
     account: ACCOUNT,
     limit: { type: "int", value: "<n>", desc: "at most this many (default 50, max 500)" },
     before: { type: "string", value: "<id>", desc: "messages older than this message id" },
+    "mark-read": { type: "bool", desc: "send read receipts for the incoming messages returned" },
     fields: { type: "string", value: "<list>", desc: "add columns: kept_by, mentions_me, reply_to, media, operator" },
   },
   examples: ["whatsapp-axi read 120363000000000001@g.us", "whatsapp-axi read +15550100001 --limit 10"],
@@ -222,7 +225,7 @@ export async function read(ctx: Ctx, args: string[]): Promise<unknown> {
   if (limit !== undefined && (limit < 1 || limit > 500)) throw usage("--limit must be from 1 to 500");
   const account = chooseAccount(ctx, p.flags.account, "read");
   const d = ctx.daemon(account);
-  const res = await d.call("GET", `/v1/messages${q({ chat: p.pos[0], before: p.flags.before as string | undefined, limit })}`);
+  const res = await d.call("GET", `/v1/messages${q({ chat: p.pos[0], before: p.flags.before as string | undefined, limit, mark_read: p.flags["mark-read"] ? 1 : undefined })}`);
   const chat = res.chat as Obj | undefined;
   expect(d, chat && typeof chat.id === "string" && Array.isArray(res.messages), "messages is missing fields");
   const list = res.messages as Obj[];
@@ -240,6 +243,7 @@ export async function read(ctx: Ctx, args: string[]): Promise<unknown> {
     operator: (m.from as Obj | undefined)?.operator ?? null,
   }));
   const out: Obj = { chat: chat.id, count: list.length, messages: pick(rows, ["id", "t", "from", "text", ...fields]) };
+  if (typeof res.marked_read === "number") out.marked_read = res.marked_read;
   const help = [`Run \`whatsapp-axi message view ${chat.id}/<id>${af}\` for one message in full`];
   if (res.more) help.unshift(`Run \`whatsapp-axi read ${chat.id} --before ${list[0].id}${af}\` for older messages`);
   out.help = help;

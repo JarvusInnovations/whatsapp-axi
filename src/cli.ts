@@ -2,7 +2,7 @@ import { encode } from "@toon-format/toon";
 import { runAxiCli } from "axi-sdk-js";
 import { renderHelp, type CommandSpec } from "./args.js";
 import { accountAdd, accountAddSpec, accountRemove, accountRemoveSpec, accounts, accountsSpec, daemonRun, daemonRunSpec, home } from "./commands/accounts.js";
-import { download, downloadSpec, react, reactSpec, send, sendFile, sendFileSpec, sendSpec } from "./commands/act.js";
+import { download, downloadSpec, markRead, markReadSpec, react, reactSpec, send, sendFile, sendFileSpec, sendSpec, typing, typingSpec } from "./commands/act.js";
 import { authLink, authLinkSpec, authLogout, authLogoutSpec } from "./commands/auth.js";
 import {
   daemonControl,
@@ -46,7 +46,7 @@ import { VERSION } from "./version.js";
 export const DESCRIPTION = "Agent-ergonomic CLI for WhatsApp accounts, each served by a local daemon";
 
 export const TOP_HELP = `usage: whatsapp-axi [command] [args] [flags]
-commands[18]:
+commands[20]:
   (none)=home: accounts with state and scope
   accounts, account add <name>, account remove <name> --confirm <name>
   auth link --phone <number> | --qr, auth logout --confirm
@@ -55,11 +55,13 @@ commands[18]:
   daemon run <name> (foreground)
   doctor [--account <name>]
   chats, chat view <chat>
-  events [--after <seq>] [--limit N] [--chat <chat>] [--kind <kind>] [--follow]
-  read <chat> [--limit N] [--before <id>]
+  events [--after <seq>] [--limit N] [--chat <chat>] [--kind <kind>] [--follow] [--mark-read]
+  read <chat> [--limit N] [--before <id>] [--mark-read]
   message view <ref> [--full]
   send <chat> <text|-> [--reply <ref>] [--mention <user>]... [--first-contact]
   send-file <chat> <path> [--caption <text>] [--as <type>] [--reply <ref>] [--first-contact]
+  mark-read <ref> | mark-read --chat <chat>
+  typing <chat> [--stop]
   react <ref> <emoji> | react <ref> --remove
   download <ref>
   forget <chat> [--message <ref>] --confirm
@@ -109,6 +111,8 @@ const SINGLE: Record<string, Sub> = {
   forget: { spec: forgetSpec, run: forget },
   send: { spec: sendSpec, run: (c, a) => send(c, a) },
   "send-file": { spec: sendFileSpec, run: sendFile },
+  "mark-read": { spec: markReadSpec, run: markRead },
+  typing: { spec: typingSpec, run: typing },
   react: { spec: reactSpec, run: react },
   download: { spec: downloadSpec, run: download },
 };
