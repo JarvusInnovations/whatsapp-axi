@@ -49,8 +49,11 @@ npm ci && npm run lint && npm run typecheck && npm run build && npm test
 
 ## Licence
 
-MIT, see [LICENSE](LICENSE). The daemon links whatsmeow, which is licensed under the
-[Mozilla Public License 2.0](https://github.com/tulir/whatsmeow/blob/main/LICENSE). MPL-2.0 is a
-file-level copyleft: whatsmeow's own files stay under MPL-2.0 (including any changes made to them),
-while this project's files can be MIT. A binary that includes whatsmeow must tell recipients where
-to get whatsmeow's source. See `docs/research/whatsmeow.md` for the details.
+The source in this repository is MIT, see [LICENSE](LICENSE).
+
+The daemon links [whatsmeow](https://github.com/tulir/whatsmeow) (MPL-2.0), which in turn links
+`go.mau.fi/libsignal` (**GPL-3.0**). A compiled daemon binary is therefore a combined work that can
+only be distributed under GPL-3.0 terms, with its complete source offered alongside. The CLI is a
+separate program that talks to the daemon over a socket. See
+[`docs/research/whatsmeow.md`](docs/research/whatsmeow.md#licence) for the details; this is not
+legal advice.
