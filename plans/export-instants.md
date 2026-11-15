@@ -1,5 +1,6 @@
 ---
-status: in-progress
+status: done
+pr: 30
 depends: [house-style]
 specs:
   - specs/conventions.md
