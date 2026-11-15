@@ -131,9 +131,22 @@ describe("doctor and daemon status write the rows they print", () => {
 
   it("daemon status", async () => {
     const p = join(dir, "status.json");
-    const r = await run(["daemon", "status", "example", `--json-out=${p}`]);
+    const r = await run(["daemon", "status", "example", "--tz", "America/New_York", `--json-out=${p}`]);
     expect(r.code, r.out).toBe(0);
     expect(read(p)).toHaveProperty("service");
+    // The view shows local time; the file keeps the daemon's instant.
+    expect(r.out).toContain("2030-01-05T09:00:00-05:00");
+    expect(read(p).daemon.since).toBe("2030-01-05T14:00:00Z");
+  });
+
+  it("doctor's file keeps the daemon's instants where the view shows local times", async () => {
+    const p = join(dir, "doctor.json");
+    const r = await run(["doctor", "--tz", "America/New_York", `--json-out=${p}`]);
+    expect(r.out).toContain("connected since 2030-01-05T09:00:00-05:00");
+    const doc = read(p) as { checks: { check: string; status: string; detail: string }[]; summary: string };
+    expect(doc.checks.find((c) => c.check === "state")?.detail).toContain("connected since 2030-01-05T14:00:00Z");
+    expect(Object.keys(doc.checks[0])).toEqual(["account", "check", "status", "detail"]);
+    expect(typeof doc.summary).toBe("string");
   });
 
   it("other local commands reject it as unknown", async () => {

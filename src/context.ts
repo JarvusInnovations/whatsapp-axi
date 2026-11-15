@@ -46,6 +46,11 @@ export interface Ctx {
   acted?: Resolved;
   /** Raised by a command that prints its result and still fails (a failed mark, a failed export). */
   exitCode: number;
+  /**
+   * What a local command (doctor, daemon status) writes to its --json-out file, when it differs
+   * from what it prints: the file keeps the daemon's UTC instants where the view shows local times.
+   */
+  exportDoc?: unknown;
 }
 
 let serviceFactory: () => ServiceManager = () => new SystemdUser();

@@ -330,7 +330,10 @@ export async function daemonStatus(ctx: Ctx, args: string[]): Promise<unknown> {
   };
   try {
     const ds = await ctx.daemon(name).status();
-    out.daemon = { state: ds.state, since: time(ctx, ds.since), ...(ds.reason ? { reason: ds.reason } : {}), version: ds.daemon_version };
+    const d = { state: ds.state, ...(ds.reason ? { reason: ds.reason } : {}), version: ds.daemon_version };
+    out.daemon = { ...d, since: time(ctx, ds.since) };
+    // The file keeps the daemon's instant.
+    ctx.exportDoc = { account: name, service: out.service, daemon: { ...d, since: ds.since } };
   } catch (err) {
     if (!(err instanceof AxiError)) throw err;
     out.daemon = { state: `unavailable (${reasonOf(err)})` };
