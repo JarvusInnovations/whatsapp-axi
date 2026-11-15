@@ -7,7 +7,8 @@ import { accountExists, listAccounts, roots, validAccount, accountPaths, type Ro
 
 export interface Ctx {
   roots: Roots;
-  daemon(account: string): Daemon;
+  /** The daemon client of an account; timeoutMs shortens its request limit (the home view). */
+  daemon(account: string, timeoutMs?: number): Daemon;
   /** The service manager of the daemon commands (systemd user services on Linux). */
   service: ServiceManager;
 }
@@ -21,7 +22,7 @@ export function setServiceFactory(f: () => ServiceManager): void {
 
 export function defaultCtx(): Ctx {
   const r = roots();
-  return { roots: r, daemon: (a) => new Daemon(a, accountPaths(a, r).socket), service: serviceFactory() };
+  return { roots: r, daemon: (a, t) => new Daemon(a, accountPaths(a, r).socket, t), service: serviceFactory() };
 }
 
 /** Resolves --account: required with several accounts, optional with exactly one. */

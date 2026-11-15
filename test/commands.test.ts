@@ -1,4 +1,4 @@
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addAccount, apiError, FakeDaemon, makeEnv, run, socketPath, STATUS, type Env } from "./helpers.js";
@@ -511,7 +511,10 @@ describe("accounts and the home view", () => {
     expect(r.out).toContain("accounts[2]{name,state,scope}:");
     expect(r.out).toContain("example,connected,tagged");
     expect(r.out).toContain("other,stopped,null");
-    expect(r.out).toContain("whatsapp-axi daemon start other");
+    // Not installed as a service: the hint is install or run, not start.
+    expect(r.out).toContain("whatsapp-axi daemon install other");
+    expect(r.out).toContain("whatsapp-axi daemon run other");
+    expect(r.out).not.toContain("daemon start other");
     r = await run(["accounts", "--fields", "phone"]);
     expect(r.out).toContain("{name,state,scope,phone}");
     expect(r.out).toContain("+15550100000");
@@ -521,11 +524,45 @@ describe("accounts and the home view", () => {
     expect(r.out).toContain("example,connected,tagged");
   });
 
-  it("fails rather than guessing when a running daemon answers badly", async () => {
+  it("degrades per row: a daemon that answers badly, errors or hangs is a row, never a failed command", async () => {
     fake.route("GET /v1/settings", () => ({ raw: "garbage" }));
-    const r = await run(["accounts"]);
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("bad_response");
+    let r = await run(["accounts"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("example,error (bad_response),null");
+    expect(r.out).toContain("daemon status example");
+    fake.route("GET /v1/status", () => apiError(500, "internal", "Internal error in the daemon; see its log."));
+    r = await run([]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("example,error (internal),null");
+    const { ROW_TIMEOUT } = await import("../src/commands/accounts.js");
+    const saved = ROW_TIMEOUT.ms;
+    ROW_TIMEOUT.ms = 200;
+    try {
+      addAccount(env, "other");
+      fake.route("GET /v1/status", () => ({ hang: true }));
+      const t0 = Date.now();
+      r = await run(["accounts"]);
+      expect(r.code, r.out).toBe(0);
+      expect(Date.now() - t0).toBeLessThan(2000);
+      expect(r.out).toContain("example,not answering,null");
+      expect(r.out).toContain("other,stopped,null");
+      r = await run([]);
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("example,not answering,null");
+    } finally {
+      ROW_TIMEOUT.ms = saved;
+    }
+  });
+
+  it("names daemon start for a stopped account installed as a service", async () => {
+    addAccount(env, "other");
+    const units = join(env.home, "config", "systemd", "user");
+    mkdirSync(join(units, "default.target.wants"), { recursive: true });
+    writeFileSync(join(units, "whatsapp-axi@.service"), "");
+    writeFileSync(join(units, "default.target.wants", "whatsapp-axi@other.service"), "");
+    const r = await run([]);
+    expect(r.out).toContain("other,stopped,null");
+    expect(r.out).toContain("whatsapp-axi daemon start other");
   });
 
   it("says so when there are no accounts", async () => {
