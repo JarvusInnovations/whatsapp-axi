@@ -5,7 +5,87 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main } from "../src/cli.js";
-import { defaultCtx } from "../src/context.js";
+import { defaultCtx, setServiceFactory } from "../src/context.js";
+import type { CommandResult, ServiceManager, UnitState } from "../src/service.js";
+
+/**
+ * A fake systemd user manager: records every call, keeps unit states, and creates and removes the
+ * enablement links under the test's unit directory as `systemctl --user enable|disable` would.
+ * Tests never reach the real service manager.
+ */
+export class FakeService implements ServiceManager {
+  linger: boolean | undefined = true;
+  isSupported = true;
+  calls: string[][] = [];
+  states = new Map<string, UnitState>();
+  logLines: string[] = [];
+  logResult: CommandResult = { code: 0, stdout: "", stderr: "" };
+  failVerb: string | undefined;
+
+  constructor(private readonly unitDir: string) {}
+
+  supported(): boolean {
+    return this.isSupported;
+  }
+
+  user(): string {
+    return "tester";
+  }
+
+  async lingering(): Promise<boolean | undefined> {
+    return this.linger;
+  }
+
+  private set(unit: string, active: boolean): void {
+    const prev = this.states.get(unit);
+    this.states.set(unit, { active: active ? "active" : "inactive", sub: active ? "running" : "dead", enabled: prev?.enabled ?? "", since: active ? "2030-01-05 14:00:00 UTC" : null, pid: active ? 4242 : null });
+  }
+
+  async systemctl(args: string[]): Promise<CommandResult> {
+    this.calls.push(args);
+    const verb = args[0];
+    if (verb === this.failVerb) return { code: 1, stdout: "", stderr: "Failed to connect to bus: No medium found\n" };
+    const unit = args[args.length - 1];
+    const wants = join(this.unitDir, "default.target.wants");
+    switch (verb) {
+      case "enable":
+        mkdirSync(wants, { recursive: true });
+        writeFileSync(join(wants, unit), "");
+        if (args.includes("--now")) this.set(unit, true);
+        this.states.set(unit, { ...this.states.get(unit)!, enabled: "enabled" });
+        break;
+      case "disable":
+        rmSync(join(wants, unit), { force: true });
+        if (args.includes("--now")) this.set(unit, false);
+        this.states.set(unit, { ...this.states.get(unit)!, enabled: "disabled" });
+        break;
+      case "start":
+      case "restart":
+        this.set(unit, true);
+        break;
+      case "stop":
+        this.set(unit, false);
+        break;
+    }
+    return { code: 0, stdout: "", stderr: "" };
+  }
+
+  async show(unit: string): Promise<UnitState> {
+    return this.states.get(unit) ?? { active: "inactive", sub: "dead", enabled: "", since: null, pid: null };
+  }
+
+  async logs(_unit: string, lines: number, _follow: boolean, line: (s: string) => void): Promise<CommandResult> {
+    for (const l of this.logLines.slice(-lines)) line(l);
+    return this.logResult;
+  }
+
+  verbs(): string[] {
+    return this.calls.map((c) => c.join(" "));
+  }
+}
+
+/** The fake service manager of the current test environment. */
+export let service: FakeService;
 
 export interface Env {
   home: string;
@@ -27,6 +107,8 @@ export function makeEnv(): Env {
   process.env.XDG_DATA_HOME = join(home, "data");
   process.env.XDG_RUNTIME_DIR = runtime;
   delete process.env.WHATSAPP_AXI_DAEMON;
+  service = new FakeService(join(home, "config", "systemd", "user"));
+  setServiceFactory(() => service);
   return {
     home,
     runtime,

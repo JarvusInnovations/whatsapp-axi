@@ -92,7 +92,7 @@ export async function accountAdd(ctx: Ctx, args: string[]): Promise<unknown> {
   if (!accountExists(name, ctx.roots)) throw failure(`The daemon reported success but account ${name} has no settings file.`, "account_add_failed");
   return {
     account: { name, created: true, scope: "tagged", settings: accountPaths(name, ctx.roots).settings },
-    help: [`Run \`${startCommand(name)}\` to start its daemon`, `Run \`whatsapp-axi operators add <user> --account ${name}\` to add an operator`],
+    help: [`Run \`whatsapp-axi daemon install ${name}\` to run its daemon as a service (or \`whatsapp-axi daemon run ${name}\` in the foreground)`, `Run \`whatsapp-axi operators add <user> --account ${name}\` to add an operator`],
   };
 }
 

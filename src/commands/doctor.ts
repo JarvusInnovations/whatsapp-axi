@@ -1,5 +1,6 @@
-// doctor: files and modes, the daemon on its socket, protocol and versions, the link and the
-// account's state with the fix for each stopped state, last phone activity, and the wake file.
+// doctor: files and modes, the daemon on its socket, the service (installed, enabled, running),
+// lingering, the versions of the CLI, the installed binary and the running daemon, the link and
+// the account's state with the fix for each stopped state, last phone activity, and the wake file.
 import { accessSync, constants, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { AxiError } from "axi-sdk-js";
@@ -8,6 +9,7 @@ import { startCommand, type Status } from "../client.js";
 import { usage } from "../errors.js";
 import { listAccounts, accountPaths, validAccount } from "../paths.js";
 import { VERSION } from "../version.js";
+import { serviceChecks } from "./daemon.js";
 import type { Ctx } from "../context.js";
 
 interface Check {
@@ -34,7 +36,7 @@ const STOPPED: Record<string, string> = {
 const STOPPED_FIX: Record<string, (name: string) => string> = {
   logged_out: (name) => `whatsapp-axi auth link --phone <number> --account ${name}`,
   outdated: () => "npm install -g whatsapp-axi@latest, then whatsapp-axi daemon upgrade",
-  suspended: (name) => `wait for the expiry named in the reason, then restart the daemon (${startCommand(name)})`,
+  suspended: (name) => `wait for the expiry named in the reason, then whatsapp-axi daemon restart ${name}`,
 };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -69,8 +71,10 @@ async function checkAccount(ctx: Ctx, name: string, now: number): Promise<{ acco
     } else if (err instanceof AxiError) {
       checks.push({ check: "daemon", result: "fail", detail: `${err.code}: ${err.message}`, ...(err.suggestions[0] ? { fix: err.suggestions[0] } : {}) });
     } else throw err;
+    checks.push(...(await serviceChecks(ctx, name, null)));
     return { account: name, checks };
   }
+  checks.push(...(await serviceChecks(ctx, name, st.daemon_version)));
   checks.push({ check: "daemon", result: "ok", detail: `answering, protocol ${st.protocol}` });
   checks.push(
     st.daemon_version === VERSION
