@@ -166,6 +166,14 @@ the daemon drops it in memory.
 A `full` account therefore starts empty on the day it is linked. Importing history is a possible
 later feature and would need its own spec.
 
+## Membership is not content
+
+Which groups the account belongs to, their names and who is in them are facts about the account,
+not messages. They are available in every scope, for a group with nothing kept as much as any
+other (`groups` and `chat view`, [cli.md](cli.md)): an operator has to be able to see a group to
+set its scope, and a consumer has to see who can read a group before posting in it. The daemon
+asks WhatsApp for them when asked and does not store member lists.
+
 ## Counters
 
 For each chat, the daemon keeps one number: how many messages it has discarded there. The counter

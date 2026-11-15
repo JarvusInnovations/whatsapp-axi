@@ -80,6 +80,7 @@ Reports, per account, with a fix command for anything wrong:
 | Command | Does |
 | --- | --- |
 | `chats` | chats with kept content: id, name, type, effective scope. `--fields` adds last kept time and discard count |
+| `groups` | every group the account is a member of, kept content or not: id, name, effective scope, member count. Needs a live connection |
 | `chat view <chat>` | one chat, with participants marked `me`, `operator`, `contact` |
 | `events [--after <seq>] [--limit N] [--chat <chat>] [--kind <kind>] [--follow] [--mark-read]` | events after a point. `--mark-read` sends read receipts for the incoming messages returned. The last line of output states the highest `seq` returned, for the next call |
 | `read <chat> [--limit N] [--before <id>] [--mark-read]` | kept messages of a chat, oldest first |

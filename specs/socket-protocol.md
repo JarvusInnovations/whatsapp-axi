@@ -63,6 +63,7 @@ upgrade command.
 | `GET /v1/settings` | the current settings |
 | `PATCH /v1/settings` | changes settings; the body is a partial settings object, validated as a whole before anything is written |
 | `GET /v1/chats` | chats with kept content, with name, type, effective scope, last kept time and discard count |
+| `GET /v1/groups` | every group the account is a member of, asked of WhatsApp at request time: id, name, effective scope, member count, discard count. `not_connected` when offline |
 | `GET /v1/chats/{chat}` | one chat: the above plus its participants as user objects, each with `operator` and `contact` |
 | `GET /v1/events?after=&limit=&chat=&kind=&follow=&mark_read=` | events after a `seq`. With `follow=1`, **streams**. With `mark_read=1`, marks the returned incoming messages read |
 | `GET /v1/messages?chat=&before=&limit=&mark_read=` | kept messages of a chat, newest last. `mark_read=1` as above |
