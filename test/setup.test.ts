@@ -74,7 +74,10 @@ describe("setup hooks", () => {
     process.chdir(sub);
     const claude = join(project, ".claude", "settings.json");
     mkdirSync(join(project, ".claude"));
-    writeFileSync(claude, JSON.stringify({ hooks: { SessionStart: [{ matcher: "", hooks: [{ type: "command", command: "other-tool home" }] }] }, permissions: { allow: ["x"] } }));
+    writeFileSync(
+      claude,
+      JSON.stringify({ hooks: { SessionStart: [{ matcher: "", hooks: [{ type: "command", command: "other-tool home" }] }] }, permissions: { allow: ["x"] } }),
+    );
     r = await hrun(["setup", "hooks", "--scope", "project"]);
     expect(r.code, r.out).toBe(0);
     expect(r.out).toContain(".whatsapp-axi.json");
@@ -160,7 +163,20 @@ describe("session-start", () => {
     const sinces: string[] = [];
     fake.route("GET /v1/events", ({ query }) => {
       sinces.push(query.get("since") ?? "");
-      return { body: { events: [{ seq: 7, kind: "message", chat: { id: "120363000000000001@g.us", name: "Secret group" }, message: { id: "3EB0X", text: "SECRET-MARKER", from: { id: "100000000000001@lid", pn: "+15550100001", name: "Sam" } } }], latest_seq: 7, total: 7 } };
+      return {
+        body: {
+          events: [
+            {
+              seq: 7,
+              kind: "message",
+              chat: { id: "120363000000000001@g.us", name: "Secret group" },
+              message: { id: "3EB0X", text: "SECRET-MARKER", from: { id: "100000000000001@lid", pn: "+15550100001", name: "Sam" } },
+            },
+          ],
+          latest_seq: 7,
+          total: 7,
+        },
+      };
     });
     await fake.listen(socketPath(env, "example"));
     try {
@@ -172,7 +188,7 @@ describe("session-start", () => {
       expect(r.code, r.out).toBe(0);
       expect(r.out).toContain("whatsapp_axi[2]{account,state,scope,events_24h}:");
       expect(r.out).toContain("example,connected,tagged,7");
-      expect(r.out).toContain("missing,\"unknown (NO_ACCOUNT: no such account)\",?,?");
+      expect(r.out).toContain('missing,"unknown (NO_ACCOUNT: no such account)",?,?');
       for (const leak of ["SECRET-MARKER", "Secret group", "Sam", "+1555", "@lid", "@g.us", "null"]) expect(r.out).not.toContain(leak);
       expect(sinces).toEqual(["2030-01-05T12:00:00Z"]);
       r = await run(["session-start", "--dir", project], { now });
@@ -202,9 +218,9 @@ describe("session-start", () => {
       const r = await run(["session-start", "--dir", project]);
       expect(Date.now() - t0).toBeLessThan(2000);
       expect(r.code, r.out).toBe(0);
-      expect(r.out).toContain("example,\"unavailable (TIMEOUT:");
-      expect(r.out).toContain("stopped,\"unavailable (DAEMON_NOT_RUNNING:");
-      expect(r.out).toContain("broken,\"unavailable (PROTOCOL_MISMATCH:");
+      expect(r.out).toContain('example,"unavailable (TIMEOUT:');
+      expect(r.out).toContain('stopped,"unavailable (DAEMON_NOT_RUNNING:');
+      expect(r.out).toContain('broken,"unavailable (PROTOCOL_MISMATCH:');
       expect(r.out).not.toContain("null");
     } finally {
       HOOK_ROW.ms = saved;

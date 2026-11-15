@@ -106,9 +106,13 @@ function lookup(argv: string[]): { spec: CommandSpec; rest: string[] } {
   const next = argv[i];
   if (subs.length && (next === undefined || next.startsWith("-"))) {
     if (next === "--help") throw new HelpRequest(renderGroupHelp(prefix));
-    throw usage(`\`${prefix}\` needs a subcommand: ${subs.join(", ")}`, subs.map((s) => `usage: ${BIN} ${prefix} ${s}`));
+    throw usage(
+      `\`${prefix}\` needs a subcommand: ${subs.join(", ")}`,
+      subs.map((s) => `usage: ${BIN} ${prefix} ${s}`),
+    );
   }
-  if (subs.length) throw invalid(`unknown subcommand ${JSON.stringify(next)} for \`${prefix}\`; valid: ${subs.join(", ")}`, [`Run \`${BIN} ${prefix} --help\` to see them`]);
+  if (subs.length)
+    throw invalid(`unknown subcommand ${JSON.stringify(next)} for \`${prefix}\`; valid: ${subs.join(", ")}`, [`Run \`${BIN} ${prefix} --help\` to see them`]);
   throw invalid(`Unknown command: ${head}`, ["Run `whatsapp-axi --help` to see the commands"]);
 }
 
@@ -118,7 +122,13 @@ class HelpRequest {
 
 function renderGroupHelp(prefix: string): string {
   const specs = SPECS.filter((s) => s.name.startsWith(`${prefix} `));
-  const lines = [`command: ${prefix}`, `subcommands[${specs.length}]:`, ...specs.map((s) => `  ${s.name}: ${s.summary}`), "help[1]:", `  Run \`${BIN} ${prefix} <subcommand> --help\` for usage`];
+  const lines = [
+    `command: ${prefix}`,
+    `subcommands[${specs.length}]:`,
+    ...specs.map((s) => `  ${s.name}: ${s.summary}`),
+    "help[1]:",
+    `  Run \`${BIN} ${prefix} <subcommand> --help\` for usage`,
+  ];
   return `${lines.join("\n")}\n`;
 }
 
@@ -245,14 +255,18 @@ async function runHandler(ctx: Ctx, spec: CommandSpec, handler: Handler, argsIn:
       if (file.lines > 0) {
         closeJsonOut();
         if (file.error) return exportFailed(ctx, shown, file.path, file.error);
-        return isObj(shown) ? annotate(shown, exportLines(file, `${file.lines} JSON ${file.lines === 1 ? "line" : "lines"}`), jqHint(file.path, undefined, true)) : shown;
+        return isObj(shown)
+          ? annotate(shown, exportLines(file, `${file.lines} JSON ${file.lines === 1 ? "line" : "lines"}`), jqHint(file.path, undefined, true))
+          : shown;
       }
       const doc = local || output.body === undefined ? withoutHelp(shown) : output.body;
       writeDoc(doc);
       closeJsonOut();
       // An export failure never undoes a success: the result, then export_error, and exit 1.
       if (file.error) return exportFailed(ctx, shown, file.path, file.error);
-      return isObj(shown) ? annotate(shown, exportLines(file, local ? "the rows printed" : "the daemon's response body"), jqHint(file.path, doc, false)) : shown;
+      return isObj(shown)
+        ? annotate(shown, exportLines(file, local ? "the rows printed" : "the daemon's response body"), jqHint(file.path, doc, false))
+        : shown;
     } finally {
       closeJsonOut();
       resetOutput();
@@ -280,7 +294,11 @@ export function formatError(error: unknown): { output: string; exitCode: number 
   }
   const message = error instanceof Error ? error.message : String(error);
   return {
-    output: line({ error: `unexpected failure: ${message.split("\n")[0]}`, code: "INTERNAL_ERROR", help: ["Run `whatsapp-axi doctor` to check the accounts, the daemons and the files"] }),
+    output: line({
+      error: `unexpected failure: ${message.split("\n")[0]}`,
+      code: "INTERNAL_ERROR",
+      help: ["Run `whatsapp-axi doctor` to check the accounts, the daemons and the files"],
+    }),
     exitCode: 1,
   };
 }
@@ -306,7 +324,13 @@ export async function main(argv: string[] = process.argv.slice(2), io: Io = proc
   }
   const first = argv[0];
   if (first?.startsWith("-") && !(argv.length === 1 && ["--help", "-v", "-V", "--version"].includes(first))) {
-    io.stdout.write(line({ error: `flags come after the command; ${JSON.stringify(first)} came first`, code: "USAGE", help: [`Run \`${BIN} <command> [args] [flags]\` with the flags last`, DISCOVERY] }));
+    io.stdout.write(
+      line({
+        error: `flags come after the command; ${JSON.stringify(first)} came first`,
+        code: "USAGE",
+        help: [`Run \`${BIN} <command> [args] [flags]\` with the flags last`, DISCOVERY],
+      }),
+    );
     process.exitCode = 2;
     return 2;
   }

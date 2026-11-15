@@ -44,7 +44,12 @@ export class FakeService implements ServiceManager {
   private async set(unit: string, active: boolean): Promise<void> {
     const prev = this.states.get(unit);
     const as = active ? this.startAs : undefined;
-    const state = as === "failed" ? { active: "failed", sub: "failed" } : as === "activating" ? { active: "activating", sub: "auto-restart" } : { active: active ? "active" : "inactive", sub: active ? "running" : "dead" };
+    const state =
+      as === "failed"
+        ? { active: "failed", sub: "failed" }
+        : as === "activating"
+          ? { active: "activating", sub: "auto-restart" }
+          : { active: active ? "active" : "inactive", sub: active ? "running" : "dead" };
     this.states.set(unit, { ...state, enabled: prev?.enabled ?? "", since: active ? "2030-01-05 14:00:00 UTC" : null, pid: active ? 4242 : null });
     const name = /^whatsapp-axi@(.+)\.service$/.exec(unit)?.[1];
     if (!name) return;
@@ -119,7 +124,18 @@ export interface Env {
   cleanup(): Promise<void>;
 }
 
-const VARS = ["HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "WHATSAPP_AXI_DAEMON", "WHATSAPP_AXI_ACCOUNT", "WHATSAPP_AXI_CONFIG_DIR", "WHATSAPP_AXI_TIMEOUT_MS", "WHATSAPP_AXI_DISABLE_HOOKS"];
+const VARS = [
+  "HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_STATE_HOME",
+  "XDG_DATA_HOME",
+  "XDG_RUNTIME_DIR",
+  "WHATSAPP_AXI_DAEMON",
+  "WHATSAPP_AXI_ACCOUNT",
+  "WHATSAPP_AXI_CONFIG_DIR",
+  "WHATSAPP_AXI_TIMEOUT_MS",
+  "WHATSAPP_AXI_DISABLE_HOOKS",
+];
 
 export function makeEnv(): Env {
   const saved = Object.fromEntries(VARS.map((v) => [v, process.env[v]]));
@@ -288,7 +304,9 @@ export class FakeDaemon {
           if (m === req.method && p.endsWith("*") && url.pathname.startsWith(p.slice(0, -1))) fn = f;
         }
       }
-      const reply = fn ? fn({ method: req.method ?? "", path: url.pathname, query: url.searchParams, body }) : apiError(400, "VALIDATION_ERROR", "Unknown request.");
+      const reply = fn
+        ? fn({ method: req.method ?? "", path: url.pathname, query: url.searchParams, body })
+        : apiError(400, "VALIDATION_ERROR", "Unknown request.");
       if (reply.hang) return;
       if (reply.drop) {
         req.socket.destroy();

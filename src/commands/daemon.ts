@@ -36,7 +36,9 @@ export function installedAccounts(ctx: Ctx): string[] {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ENOENT") return [];
-    throw failure(`The user's service directory ${dir} cannot be read (${code ?? (err as Error).message}).`, "SERVICE_FAILED", ["Run `whatsapp-axi doctor` for the service checks"]);
+    throw failure(`The user's service directory ${dir} cannot be read (${code ?? (err as Error).message}).`, "SERVICE_FAILED", [
+      "Run `whatsapp-axi doctor` for the service checks",
+    ]);
   }
   return names
     .map((f) => /^whatsapp-axi@([a-z][a-z0-9-]{0,23})\.service$/.exec(f)?.[1])
@@ -236,7 +238,10 @@ export const daemonUninstallSpec: CommandSpec = {
 export async function daemonUninstall(ctx: Ctx, args: string[]): Promise<unknown> {
   const p = parse(daemonUninstallSpec, args);
   const name = account(ctx, { positional: p.pos[0] });
-  if (!p.flags.confirm) throw confirmRequired("`daemon uninstall` stops and removes the service; add --confirm", [`Run \`whatsapp-axi daemon uninstall ${name} --confirm\` to remove it`]);
+  if (!p.flags.confirm)
+    throw confirmRequired("`daemon uninstall` stops and removes the service; add --confirm", [
+      `Run \`whatsapp-axi daemon uninstall ${name} --confirm\` to remove it`,
+    ]);
   const s = svc(ctx);
   const unit = unitName(name);
   const state = await s.show(unit);
@@ -261,7 +266,15 @@ export async function daemonUninstall(ctx: Ctx, args: string[]): Promise<unknown
 // ---- start, stop, restart ----------------------------------------------------
 
 function controlSpec(verb: string, summary: string, mutation: boolean): CommandSpec {
-  return { name: `daemon ${verb}`, summary, positionals: [NAME], flags: {}, examples: [`whatsapp-axi daemon ${verb} example`], mutation, account: "positional" };
+  return {
+    name: `daemon ${verb}`,
+    summary,
+    positionals: [NAME],
+    flags: {},
+    examples: [`whatsapp-axi daemon ${verb} example`],
+    mutation,
+    account: "positional",
+  };
 }
 
 export const daemonStartSpec = controlSpec("start", "Start the account's service", true);
@@ -282,7 +295,8 @@ export async function daemonControl(ctx: Ctx, args: string[], verb: "start" | "s
     await waitReady(ctx, s, name, verb);
     return { action: "unchanged", reason: `${name} is already running (no-op)` };
   }
-  if (verb === "stop" && before.active !== "active" && before.active !== "activating") return { action: "unchanged", reason: `${name} is already stopped (no-op)` };
+  if (verb === "stop" && before.active !== "active" && before.active !== "activating")
+    return { action: "unchanged", reason: `${name} is already stopped (no-op)` };
   await systemctl(s, [verb, unit]);
   const after = verb === "stop" ? await s.show(unit) : await waitReady(ctx, s, name, verb);
   return {
@@ -304,7 +318,15 @@ export async function daemonStatus(ctx: Ctx, args: string[]): Promise<unknown> {
   const installed = isInstalled(ctx, name);
   const st = await s.show(unit);
   const out: Obj = {
-    service: { unit, installed, enabled: st.enabled || "unknown", active: st.active, sub: st.sub, ...(st.since ? { since: st.since } : {}), ...(st.pid ? { pid: st.pid } : {}) },
+    service: {
+      unit,
+      installed,
+      enabled: st.enabled || "unknown",
+      active: st.active,
+      sub: st.sub,
+      ...(st.since ? { since: st.since } : {}),
+      ...(st.pid ? { pid: st.pid } : {}),
+    },
   };
   try {
     const ds = await ctx.daemon(name).status();
@@ -314,7 +336,8 @@ export async function daemonStatus(ctx: Ctx, args: string[]): Promise<unknown> {
     out.daemon = { state: `unavailable (${reasonOf(err)})` };
   }
   if (!installed) out.help = [`Run \`whatsapp-axi daemon install ${name}\` to run it as a service`];
-  else if (st.active !== "active") out.help = [`Run \`whatsapp-axi daemon start ${name}\` to start it`, `Run \`whatsapp-axi daemon logs ${name}\` to see why it stopped`];
+  else if (st.active !== "active")
+    out.help = [`Run \`whatsapp-axi daemon start ${name}\` to start it`, `Run \`whatsapp-axi daemon logs ${name}\` to see why it stopped`];
   return out;
 }
 
@@ -363,7 +386,13 @@ export async function daemonLogs(ctx: Ctx, args: string[], write: (s: string) =>
   if (real.length === 0 && !got.some((l) => l.startsWith("-- No entries")) && r.stderr.trim()) {
     throw failure(`journalctl read no log: ${r.stderr.trim().split("\n")[0]}`, "LOGS_FAILED", unreadable);
   }
-  if (real.length === 0) return { log: `0 lines for ${unit}`, ...(isInstalled(ctx, name) ? {} : { help: [`Run \`whatsapp-axi daemon install ${name}\` to log to the journal; a foreground daemon logs to its terminal`] }) };
+  if (real.length === 0)
+    return {
+      log: `0 lines for ${unit}`,
+      ...(isInstalled(ctx, name)
+        ? {}
+        : { help: [`Run \`whatsapp-axi daemon install ${name}\` to log to the journal; a foreground daemon logs to its terminal`] }),
+    };
   return { unit, count: `${real.length} of the last ${lines} asked for`, log: real.map((l) => ({ line: l })) };
 }
 
@@ -406,11 +435,17 @@ export async function daemonUpgrade(ctx: Ctx, args: string[]): Promise<unknown> 
   const pin = pinOf(ctx.io.env);
   const pinNote = pin !== undefined ? { note: `acts on every installed account; ${PIN_VAR}=${pin} does not apply` } : {};
   if (!existsSync(dest) && accounts.length === 0) {
-    return { action: "unchanged", reason: "no installed binary and 0 installed accounts (no-op)", ...pinNote, help: ["Run `whatsapp-axi daemon install <name>` to install one"] };
+    return {
+      action: "unchanged",
+      reason: "no installed binary and 0 installed accounts (no-op)",
+      ...pinNote,
+      help: ["Run `whatsapp-axi daemon install <name>` to install one"],
+    };
   }
   const replaced = placeBinary(src, dest);
   const version = await binaryVersion(dest, ctx.io.env);
-  if (!replaced) return { action: "unchanged", reason: "the installed binary is already this CLI's (no-op)", binary: dest, ...(version ? { version } : {}), ...pinNote };
+  if (!replaced)
+    return { action: "unchanged", reason: "the installed binary is already this CLI's (no-op)", binary: dest, ...(version ? { version } : {}), ...pinNote };
   // Each account is restarted and waited for in turn; a failure is that account's row, and the
   // rest still go on.
   const rows: Obj[] = [];

@@ -128,7 +128,9 @@ export async function scopeSet(ctx: Ctx, args: string[]): Promise<unknown> {
   const chatFlag = chat ? ` --chat ${chat}` : "";
   const retry = `whatsapp-axi scope set full${chatFlag} --confirm${af}`;
   if (scope === "full" && !p.flags.confirm) {
-    throw confirmRequired(`setting full needs --confirm: full keeps every message${chat ? " of that chat" : " of every chat"}`, [`Run \`${retry}\` if you mean to widen it`]);
+    throw confirmRequired(`setting full needs --confirm: full keeps every message${chat ? " of that chat" : " of every chat"}`, [
+      `Run \`${retry}\` if you mean to widen it`,
+    ]);
   }
   const d = ctx.daemon(name);
   const before = await getSettings(d);
@@ -139,7 +141,10 @@ export async function scopeSet(ctx: Ctx, args: string[]): Promise<unknown> {
     const key = keyOf(r.settings);
     const now = r.settings.chats[key] ?? "default";
     const was = before.settings.chats[key] ?? "default";
-    const undo = was === "default" ? `whatsapp-axi scope set default --chat ${key}${af}` : `whatsapp-axi scope set ${was} --chat ${key}${was === "full" ? " --confirm" : ""}${af}`;
+    const undo =
+      was === "default"
+        ? `whatsapp-axi scope set default --chat ${key}${af}`
+        : `whatsapp-axi scope set ${was} --chat ${key}${was === "full" ? " --confirm" : ""}${af}`;
     return { chat: key, ...changed("scope", now, was, undo, r.changed === true) };
   }
   const r = await patchSettings(d, { scope }, p.flags.confirm === true, retry);
@@ -165,7 +170,9 @@ export async function scopeDMFrom(ctx: Ctx, args: string[]): Promise<unknown> {
   const af = acctFlag(ctx, name);
   const retry = `whatsapp-axi scope dm-from anyone --confirm${af}`;
   if (who === "anyone" && !p.flags.confirm) {
-    throw confirmRequired("setting anyone needs --confirm: the account then keeps direct messages from anyone, not only operators", [`Run \`${retry}\` if you mean to widen it`]);
+    throw confirmRequired("setting anyone needs --confirm: the account then keeps direct messages from anyone, not only operators", [
+      `Run \`${retry}\` if you mean to widen it`,
+    ]);
   }
   const d = ctx.daemon(name);
   const before = await getSettings(d);
@@ -221,7 +228,8 @@ export async function operatorsChange(ctx: Ctx, args: string[], add: boolean): P
   const spec = add ? operatorsAddSpec : operatorsRemoveSpec;
   const p = parse(spec, args);
   const op = p.pos[0];
-  if (!OPERATOR_RE.test(op)) throw invalid(`${JSON.stringify(op)} is not an operator: use a phone number in E.164 form (+15550100001) or a hidden id (100000000000001@lid)`);
+  if (!OPERATOR_RE.test(op))
+    throw invalid(`${JSON.stringify(op)} is not an operator: use a phone number in E.164 form (+15550100001) or a hidden id (100000000000001@lid)`);
   const name = account(ctx);
   const af = acctFlag(ctx, name);
   const retry = `whatsapp-axi operators add ${op} --confirm${af}`;
@@ -230,7 +238,9 @@ export async function operatorsChange(ctx: Ctx, args: string[], add: boolean): P
   const has = s.operators.includes(op);
   if (add === has) return { action: "unchanged", operator: op, reason: `${add ? "already an operator" : "not an operator"} (no-op)` };
   if (add && !p.flags.confirm) {
-    throw confirmRequired(`adding an operator needs --confirm: under dm_from operators the account then keeps ${op}'s direct messages`, [`Run \`${retry}\` if you mean to add them`]);
+    throw confirmRequired(`adding an operator needs --confirm: under dm_from operators the account then keeps ${op}'s direct messages`, [
+      `Run \`${retry}\` if you mean to add them`,
+    ]);
   }
   const next = add ? [...s.operators, op] : s.operators.filter((o) => o !== op);
   const r = await patchSettings(d, { operators: next }, add, retry);
@@ -287,12 +297,24 @@ export const settingsSetSpec: CommandSpec = {
   summary: `Set one of: ${SETTABLE.join(", ")}`,
   positionals: [
     { name: "key", required: true, desc: SETTABLE.join(", ") },
-    { name: "value", required: true, desc: "wake_file: absolute path or none; retain_days: days, 0 for unlimited, or default; presence: true/false; read_receipts: on-read/on-keep/off" },
+    {
+      name: "value",
+      required: true,
+      desc: "wake_file: absolute path or none; retain_days: days, 0 for unlimited, or default; presence: true/false; read_receipts: on-read/on-keep/off",
+    },
   ],
   flags: {
-    confirm: { type: "bool", desc: "required to loosen a safeguard: send.first_contact allow, raising a send.* limit, or raising retain_days (or making it unlimited)" },
+    confirm: {
+      type: "bool",
+      desc: "required to loosen a safeguard: send.first_contact allow, raising a send.* limit, or raising retain_days (or making it unlimited)",
+    },
   },
-  examples: ["whatsapp-axi settings set wake_file /home/user/.wake/whatsapp", "whatsapp-axi settings set retain_days 30", "whatsapp-axi settings set send.per_hour 20", "whatsapp-axi settings set send.per_hour 120 --confirm"],
+  examples: [
+    "whatsapp-axi settings set wake_file /home/user/.wake/whatsapp",
+    "whatsapp-axi settings set retain_days 30",
+    "whatsapp-axi settings set send.per_hour 20",
+    "whatsapp-axi settings set send.per_hour 120 --confirm",
+  ],
   mutation: true,
   jsonOut: true,
 };
@@ -335,7 +357,11 @@ export async function settingsSet(ctx: Ctx, args: string[]): Promise<unknown> {
   const p = parse(settingsSetSpec, args);
   const [key, raw] = p.pos;
   if (!SETTABLE.includes(key)) {
-    const hint = ["scope", "dm_from", "chats", "operators"].includes(key) ? [`Run \`whatsapp-axi ${key === "operators" ? "operators add <user> --confirm" : key === "dm_from" ? "scope dm-from <who>" : "scope set <scope>"}\` instead`] : [];
+    const hint = ["scope", "dm_from", "chats", "operators"].includes(key)
+      ? [
+          `Run \`whatsapp-axi ${key === "operators" ? "operators add <user> --confirm" : key === "dm_from" ? "scope dm-from <who>" : "scope set <scope>"}\` instead`,
+        ]
+      : [];
     throw invalid(`${JSON.stringify(key)} cannot be set here; settable keys: ${SETTABLE.join(", ")}`, hint);
   }
   const value = settingValue(key, raw);
@@ -343,7 +369,9 @@ export async function settingsSet(ctx: Ctx, args: string[]): Promise<unknown> {
   const af = acctFlag(ctx, name);
   const retry = `whatsapp-axi settings set ${key} ${raw} --confirm${af}`;
   if (key === "send.first_contact" && value === "allow" && !p.flags.confirm) {
-    throw confirmRequired("setting send.first_contact allow needs --confirm: it lets the account message chats it has never heard from", [`Run \`${retry}\` if you mean to loosen it`]);
+    throw confirmRequired("setting send.first_contact allow needs --confirm: it lets the account message chats it has never heard from", [
+      `Run \`${retry}\` if you mean to loosen it`,
+    ]);
   }
   const d = ctx.daemon(name);
   const before = await getSettings(d);

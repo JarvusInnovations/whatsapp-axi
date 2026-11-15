@@ -25,7 +25,10 @@ describe("auth link", () => {
     const { testCtx } = await import("./helpers.js");
     const { exitCodeFor } = await import("../src/errors.js");
     const ac = new AbortController();
-    const err = (await authLink(testCtx(), ["--phone", "+15550100000"], () => ac.abort(), ac.signal).catch((e) => e)) as { code: string; suggestions: string[] };
+    const err = (await authLink(testCtx(), ["--phone", "+15550100000"], () => ac.abort(), ac.signal).catch((e) => e)) as {
+      code: string;
+      suggestions: string[];
+    };
     expect(err.code).toBe("LINK_INTERRUPTED");
     expect(exitCodeFor(err)).toBe(1);
     expect(err.suggestions[0]).toContain("whatsapp-axi auth link --phone +15550100000");
@@ -48,7 +51,10 @@ describe("auth link", () => {
   });
 
   it("renders each QR code and prints its raw string", async () => {
-    fake.route("POST /v1/link", () => ({ lines: [{ qr: "2@first-code" }, { qr: "2@second-code" }, { result: { linked: true, state: "connected", me: ME } }], end: true }));
+    fake.route("POST /v1/link", () => ({
+      lines: [{ qr: "2@first-code" }, { qr: "2@second-code" }, { result: { linked: true, state: "connected", me: ME } }],
+      end: true,
+    }));
     const r = await run(["auth", "link", "--qr"]);
     expect(r.code, r.out).toBe(0);
     expect(r.out).toContain("qr: 2@first-code");
@@ -59,7 +65,16 @@ describe("auth link", () => {
 
   it("refuses a pairing by a different number with its own code", async () => {
     fake.route("POST /v1/link", () => ({
-      lines: [{ code: "ABCD-EFGH" }, { result: { linked: false, state: "unlinked", error: { code: "WRONG_NUMBER", message: "The phone that completed the link is not the number given to auth link, so the pairing was refused." } } }],
+      lines: [
+        { code: "ABCD-EFGH" },
+        {
+          result: {
+            linked: false,
+            state: "unlinked",
+            error: { code: "WRONG_NUMBER", message: "The phone that completed the link is not the number given to auth link, so the pairing was refused." },
+          },
+        },
+      ],
       end: true,
     }));
     const r = await run(["auth", "link", "--phone", "+15550100000"]);
@@ -70,7 +85,15 @@ describe("auth link", () => {
   });
 
   it("reports a closed window with the command to try again", async () => {
-    fake.route("POST /v1/link", () => ({ lines: [{ code: "ABCD-EFGH" }, { result: { linked: false, state: "unlinked", error: { code: "LINK_TIMEOUT", message: "The link window closed before the phone completed the link." } } }], end: true }));
+    fake.route("POST /v1/link", () => ({
+      lines: [
+        { code: "ABCD-EFGH" },
+        {
+          result: { linked: false, state: "unlinked", error: { code: "LINK_TIMEOUT", message: "The link window closed before the phone completed the link." } },
+        },
+      ],
+      end: true,
+    }));
     const r = await run(["auth", "link", "--phone", "+15550100000"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("code: LINK_TIMEOUT");
@@ -83,7 +106,9 @@ describe("auth link", () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain("code: LINK_IN_PROGRESS");
     expect(r.out).toContain("Wait for the running link attempt");
-    fake.route("POST /v1/link", () => apiError(400, "VALIDATION_ERROR", "The account is already linked (state connected). Run auth logout first to link it again.", { state: "connected" }));
+    fake.route("POST /v1/link", () =>
+      apiError(400, "VALIDATION_ERROR", "The account is already linked (state connected). Run auth logout first to link it again.", { state: "connected" }),
+    );
     r = await run(["auth", "link", "--qr"]);
     expect(r.code).toBe(2);
     expect(r.out).toContain("already linked");
@@ -129,7 +154,9 @@ describe("auth logout", () => {
   });
 
   it("is a no-op when already unlinked", async () => {
-    fake.route("POST /v1/logout", () => apiError(409, "NOT_LINKED", "Logging out needs a linked account; this one has no session (state unlinked).", { state: "unlinked" }));
+    fake.route("POST /v1/logout", () =>
+      apiError(409, "NOT_LINKED", "Logging out needs a linked account; this one has no session (state unlinked).", { state: "unlinked" }),
+    );
     const r = await run(["auth", "logout", "--confirm"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("action: unchanged");
@@ -137,7 +164,9 @@ describe("auth logout", () => {
   });
 
   it("passes on not_connected and WhatsApp errors", async () => {
-    fake.route("POST /v1/logout", () => apiError(409, "NOT_CONNECTED", "Logging out needs a live connection to WhatsApp; the account is connecting.", { state: "connecting" }));
+    fake.route("POST /v1/logout", () =>
+      apiError(409, "NOT_CONNECTED", "Logging out needs a live connection to WhatsApp; the account is connecting.", { state: "connecting" }),
+    );
     let r = await run(["auth", "logout", "--confirm"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("code: NOT_CONNECTED");

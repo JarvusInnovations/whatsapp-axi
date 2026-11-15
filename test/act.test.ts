@@ -25,7 +25,20 @@ const body = (path: string) => fake.seen.find((s) => s.path === path)?.body as R
 describe("send", () => {
   it("sends text with a reply, mentions and first contact, and prints the id", async () => {
     fake.route("POST /v1/send", () => ({ body: SENT }));
-    const r = await run(["send", GROUP, "On it", "--tz", "America/New_York", "--reply", `${GROUP}/3EB0AAAA0000000001`, "--mention", "+15550100001", "--mention", "100000000000002@lid", "--first-contact"]);
+    const r = await run([
+      "send",
+      GROUP,
+      "On it",
+      "--tz",
+      "America/New_York",
+      "--reply",
+      `${GROUP}/3EB0AAAA0000000001`,
+      "--mention",
+      "+15550100001",
+      "--mention",
+      "100000000000002@lid",
+      "--first-contact",
+    ]);
     expect(r.code, r.out).toBe(0);
     expect(r.out).toContain("action: sent");
     expect(r.out).toContain("id: 3EB0F0000000000001");
@@ -33,7 +46,13 @@ describe("send", () => {
     expect(r.out).toContain(`t: "2030-01-05T10:00:00-05:00"`);
     expect(r.out).toContain("tz: America/New_York");
     expect(r.out).toContain("without --id sends a second message");
-    expect(body("/v1/send")).toEqual({ chat: GROUP, text: "On it", reply_to: "3EB0AAAA0000000001", mentions: ["+15550100001", "100000000000002@lid"], first_contact: true });
+    expect(body("/v1/send")).toEqual({
+      chat: GROUP,
+      text: "On it",
+      reply_to: "3EB0AAAA0000000001",
+      mentions: ["+15550100001", "100000000000002@lid"],
+      first_contact: true,
+    });
   });
 
   it("reads the text from standard input with -", async () => {
@@ -47,9 +66,17 @@ describe("send", () => {
   it("renders each limit and refusal with its code and fix", async () => {
     const cases: [ReturnType<typeof apiError>, string, string][] = [
       [apiError(409, "FIRST_CONTACT", "Nothing has been received from or sent to 15550100003@s.whatsapp.net."), "FIRST_CONTACT", "--first-contact"],
-      [apiError(429, "RATE_LIMITED", "The account has reached its limit of sends per minute (send.per_minute).", { retry_after_seconds: 42 }), "RATE_LIMITED", "42 seconds"],
+      [
+        apiError(429, "RATE_LIMITED", "The account has reached its limit of sends per minute (send.per_minute).", { retry_after_seconds: 42 }),
+        "RATE_LIMITED",
+        "42 seconds",
+      ],
       [apiError(429, "DUPLICATE_TEXT", "The same text already went to the most chats allowed in ten minutes."), "DUPLICATE_TEXT", "send.same_text_chats"],
-      [apiError(409, "NOT_CONNECTED", "Sending needs a live connection to WhatsApp; the account is suspended.", { state: "suspended" }), "NOT_CONNECTED", "doctor"],
+      [
+        apiError(409, "NOT_CONNECTED", "Sending needs a live connection to WhatsApp; the account is suspended.", { state: "suspended" }),
+        "NOT_CONNECTED",
+        "doctor",
+      ],
       [apiError(404, "NOT_FOUND", "No kept message 3EB0X in the chat to reply to."), "NOT_FOUND", "chats"],
       [apiError(400, "VALIDATION_ERROR", "Mention +15550100003 is not in the chat."), "VALIDATION_ERROR", "Mention"],
       [apiError(502, "UPSTREAM_ERROR", "WhatsApp refused or failed this: sending."), "UPSTREAM_ERROR", "WhatsApp"],
@@ -103,7 +130,9 @@ describe("send outcomes", () => {
   });
 
   it("renders the daemon's outcome_unknown and a success with a warning", async () => {
-    fake.route("POST /v1/send", () => apiError(504, "OUTCOME_UNKNOWN", "Sending: the daemon could not tell whether WhatsApp accepted it; it may have gone out."));
+    fake.route("POST /v1/send", () =>
+      apiError(504, "OUTCOME_UNKNOWN", "Sending: the daemon could not tell whether WhatsApp accepted it; it may have gone out."),
+    );
     let r = await run(["send", GROUP, "hello"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("code: OUTCOME_UNKNOWN");
@@ -126,7 +155,13 @@ describe("send-file", () => {
     expect(r.code, r.out).toBe(0);
     expect(r.out).toContain("type: document");
     expect(r.out).toContain("mime: application/pdf");
-    expect(body("/v1/send-file")).toEqual({ chat: GROUP, path: join(process.cwd(), "report.pdf"), caption: "The report", as: "document", reply_to: "3EB0AAAA0000000001" });
+    expect(body("/v1/send-file")).toEqual({
+      chat: GROUP,
+      path: join(process.cwd(), "report.pdf"),
+      caption: "The report",
+      as: "document",
+      reply_to: "3EB0AAAA0000000001",
+    });
   });
 
   it("rejects an unknown --as and passes daemon refusals on", async () => {
@@ -163,7 +198,9 @@ describe("react", () => {
   it("needs an emoji or --remove, not both, and passes ambiguity on", async () => {
     expect((await run(["react", "3EB0X"])).code).toBe(2);
     expect((await run(["react", "3EB0X", "👍", "--remove"])).code).toBe(2);
-    fake.route("POST /v1/react", () => apiError(409, "AMBIGUOUS", "Message id 3EB0X is kept in 2 chats; use <chat>/<id>.", { candidates: [`${GROUP}/3EB0X`, "120363000000000002@g.us/3EB0X"] }));
+    fake.route("POST /v1/react", () =>
+      apiError(409, "AMBIGUOUS", "Message id 3EB0X is kept in 2 chats; use <chat>/<id>.", { candidates: [`${GROUP}/3EB0X`, "120363000000000002@g.us/3EB0X"] }),
+    );
     const r = await run(["react", "3EB0X", "👍"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("code: AMBIGUOUS");
@@ -173,7 +210,17 @@ describe("react", () => {
 
 describe("download", () => {
   it("prints the local path", async () => {
-    fake.route("POST /v1/download", () => ({ body: { chat: GROUP, id: "3EB0X", path: "/home/u/.local/state/whatsapp-axi/example/media/x.pdf", name: "report.pdf", mime: "application/pdf", size: 9, existing: false } }));
+    fake.route("POST /v1/download", () => ({
+      body: {
+        chat: GROUP,
+        id: "3EB0X",
+        path: "/home/u/.local/state/whatsapp-axi/example/media/x.pdf",
+        name: "report.pdf",
+        mime: "application/pdf",
+        size: 9,
+        existing: false,
+      },
+    }));
     const r = await run(["download", `${GROUP}/3EB0X`]);
     expect(r.code, r.out).toBe(0);
     expect(r.out).toContain("path: /home/u/.local/state/whatsapp-axi/example/media/x.pdf");
@@ -191,7 +238,12 @@ describe("download", () => {
 
   it("names the start command when the daemon is down", async () => {
     await fake.close();
-    for (const args of [["download", "3EB0X"], ["send", GROUP, "x"], ["react", "3EB0X", "👍"], ["send-file", GROUP, "/tmp/x"]]) {
+    for (const args of [
+      ["download", "3EB0X"],
+      ["send", GROUP, "x"],
+      ["react", "3EB0X", "👍"],
+      ["send-file", GROUP, "/tmp/x"],
+    ]) {
       const r = await run(args);
       expect(r.code).toBe(1);
       expect(r.out).toContain("DAEMON_NOT_RUNNING");
@@ -243,14 +295,18 @@ describe("mark-read", () => {
     expect(r.out).toContain("reason: off");
     expect(r.out).toContain("code: MARK_FAILED");
     expect(r.out).toContain("settings set read_receipts on-read");
-    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 0, already_marked: 0, failed: 1, reason: "not_connected", read_receipts: "on-read" } }));
+    fake.route("POST /v1/mark-read", () => ({
+      body: { chat: GROUP, marked: 0, already_marked: 0, failed: 1, reason: "not_connected", read_receipts: "on-read" },
+    }));
     r = await run(["mark-read", "3EB0AAAA0000000001"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("doctor");
   });
 
   it("says how many were sent when a mark is partial", async () => {
-    fake.route("POST /v1/mark-read", () => ({ body: { chat: GROUP, marked: 2, already_marked: 1, failed: 3, reason: "whatsapp_error", read_receipts: "on-read" } }));
+    fake.route("POST /v1/mark-read", () => ({
+      body: { chat: GROUP, marked: 2, already_marked: 1, failed: 3, reason: "whatsapp_error", read_receipts: "on-read" },
+    }));
     const r = await run(["mark-read", `${GROUP}/3EB0AAAA0000000001`]);
     expect(r.code, r.out).toBe(1);
     expect(r.out).toContain("2 marked read, 3 not marked");
@@ -260,7 +316,9 @@ describe("mark-read", () => {
   it("needs a ref or --chat, not both, and passes errors through", async () => {
     expect((await run(["mark-read"])).code).toBe(2);
     expect((await run(["mark-read", "3EB0AAAA0000000001", "--chat", GROUP])).code).toBe(2);
-    fake.route("POST /v1/mark-read", () => apiError(409, "NOT_CONNECTED", "Marking read needs a live connection to WhatsApp; the account is connecting.", { state: "connecting" }));
+    fake.route("POST /v1/mark-read", () =>
+      apiError(409, "NOT_CONNECTED", "Marking read needs a live connection to WhatsApp; the account is connecting.", { state: "connecting" }),
+    );
     const r = await run(["mark-read", "3EB0AAAA0000000001"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("code: NOT_CONNECTED");
@@ -308,7 +366,9 @@ describe("send ids", () => {
   });
 
   it("OUTCOME_UNKNOWN names the id; read first, then the full retry with --id", async () => {
-    fake.route("POST /v1/send", () => apiError(504, "OUTCOME_UNKNOWN", "Sending: the daemon could not tell whether WhatsApp accepted it; it may have gone out.", { id: ID }));
+    fake.route("POST /v1/send", () =>
+      apiError(504, "OUTCOME_UNKNOWN", "Sending: the daemon could not tell whether WhatsApp accepted it; it may have gone out.", { id: ID }),
+    );
     const r = await run(["send", GROUP, "hello"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain(`(id ${ID})`);

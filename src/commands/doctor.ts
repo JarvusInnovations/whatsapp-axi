@@ -93,7 +93,9 @@ function wakeCheck(wake: unknown): Check {
       }
     }
   }
-  return ok ? { check: "wake_file", status: "ok", detail: `${wake} is writable` } : { check: "wake_file", status: "fail", detail: `${wake} is not writable`, fix: "whatsapp-axi settings set wake_file none" };
+  return ok
+    ? { check: "wake_file", status: "ok", detail: `${wake} is writable` }
+    : { check: "wake_file", status: "fail", detail: `${wake} is not writable`, fix: "whatsapp-axi settings set wake_file none" };
 }
 
 const ALL_ROWS = ["files", "service", "lingering", "binary", "daemon", "versions", "link", "state", "phone", "wake_file"];
@@ -110,8 +112,14 @@ async function checkAccount(ctx: Ctx, e: AccountEntry, now: number): Promise<Che
   const checks: Check[] = [];
   // files
   const p = accountPaths(name, ctx.roots);
-  const problems = e.problem ? [e.problem] : [modeProblem(p.configDir, true), modeProblem(p.settings, false), modeProblem(p.stateDir, true)].filter((x): x is string => !!x);
-  checks.push(problems.length ? { check: "files", status: "fail", detail: clip(problems.join("; "), 300) } : { check: "files", status: "ok", detail: "present and owner-only" });
+  const problems = e.problem
+    ? [e.problem]
+    : [modeProblem(p.configDir, true), modeProblem(p.settings, false), modeProblem(p.stateDir, true)].filter((x): x is string => !!x);
+  checks.push(
+    problems.length
+      ? { check: "files", status: "fail", detail: clip(problems.join("; "), 300) }
+      : { check: "files", status: "ok", detail: "present and owner-only" },
+  );
 
   // The service, lingering and the installed binary, asked in parallel with the daemon.
   const s = ctx.service;
@@ -146,17 +154,26 @@ async function checkAccount(ctx: Ctx, e: AccountEntry, now: number): Promise<Che
         : { check: "service", status: "fail", detail: `${unitName(name)} installed but ${sv.active} (${sv.sub})`, fix: `whatsapp-axi daemon start ${name}` },
     );
   } else if (d.st) checks.push({ check: "service", status: "ok", detail: "not a service: a foreground daemon answers" });
-  else checks.push({ check: "service", status: "fail", detail: "not installed as a service, and no daemon answers", fix: `whatsapp-axi daemon install ${name}` });
+  else
+    checks.push({ check: "service", status: "fail", detail: "not installed as a service, and no daemon answers", fix: `whatsapp-axi daemon install ${name}` });
 
   // lingering
   if (!s.supported() || !installed) checks.push(skipped("lingering", "an installed service"));
   else if (linger === true) checks.push({ check: "lingering", status: "ok", detail: `on for ${s.user()}` });
-  else checks.push({ check: "lingering", status: "fail", detail: `${linger === false ? "off" : "unknown"} for ${s.user()}: the service stops when the last login session ends`, fix: `loginctl enable-linger ${s.user()}` });
+  else
+    checks.push({
+      check: "lingering",
+      status: "fail",
+      detail: `${linger === false ? "off" : "unknown"} for ${s.user()}: the service stops when the last login session ends`,
+      fix: `loginctl enable-linger ${s.user()}`,
+    });
 
   // binary: the installed binary against this CLI
   if (!installed) checks.push(skipped("binary", "an installed service"));
-  else if (bin === undefined) checks.push({ check: "binary", status: "fail", detail: `${installedBinary(ctx.roots)} is missing or does not run`, fix: "whatsapp-axi daemon upgrade" });
-  else if (bin !== VERSION) checks.push({ check: "binary", status: "fail", detail: `installed binary ${bin}, cli ${VERSION}`, fix: "whatsapp-axi daemon upgrade" });
+  else if (bin === undefined)
+    checks.push({ check: "binary", status: "fail", detail: `${installedBinary(ctx.roots)} is missing or does not run`, fix: "whatsapp-axi daemon upgrade" });
+  else if (bin !== VERSION)
+    checks.push({ check: "binary", status: "fail", detail: `installed binary ${bin}, cli ${VERSION}`, fix: "whatsapp-axi daemon upgrade" });
   else checks.push({ check: "binary", status: "ok", detail: `installed binary ${bin} matches the cli` });
 
   // daemon
@@ -167,7 +184,12 @@ async function checkAccount(ctx: Ctx, e: AccountEntry, now: number): Promise<Che
       check: "daemon",
       status: "fail",
       detail: reasonOf(err),
-      fix: code === "DAEMON_NOT_RUNNING" ? (installed ? `whatsapp-axi daemon start ${name}` : `whatsapp-axi daemon install ${name}`) : `whatsapp-axi daemon status ${name}`,
+      fix:
+        code === "DAEMON_NOT_RUNNING"
+          ? installed
+            ? `whatsapp-axi daemon start ${name}`
+            : `whatsapp-axi daemon install ${name}`
+          : `whatsapp-axi daemon status ${name}`,
     });
     for (const c of ["versions", "link", "state", "phone", "wake_file"]) checks.push(skipped(c, "the daemon answering"));
     return checks;
@@ -192,7 +214,12 @@ async function checkAccount(ctx: Ctx, e: AccountEntry, now: number): Promise<Che
   const since = `${st.state} since ${st.since}${st.reason ? ` (${st.reason})` : ""}`;
   if (stopped) {
     const fix = st.state === "logged_out" ? linkFix : st.state === "suspended" ? `whatsapp-axi daemon restart ${name}` : undefined;
-    checks.push({ check: "state", status: "fail", detail: `${since}: ${stopped}${st.state === "suspended" ? "; restart after the expiry named in the reason" : ""}`, ...(fix ? { fix } : {}) });
+    checks.push({
+      check: "state",
+      status: "fail",
+      detail: `${since}: ${stopped}${st.state === "suspended" ? "; restart after the expiry named in the reason" : ""}`,
+      ...(fix ? { fix } : {}),
+    });
   } else checks.push({ check: "state", status: "ok", detail: since });
   if (!st.me) checks.push(skipped("phone", "a link"));
   else if (st.last_phone_activity) {
@@ -200,7 +227,11 @@ async function checkAccount(ctx: Ctx, e: AccountEntry, now: number): Promise<Che
     const days = Math.floor(age / DAY);
     checks.push(
       age >= 12 * DAY
-        ? { check: "phone", status: "fail", detail: `last phone activity (approximate) ${st.last_phone_activity}, ${days} days ago; WhatsApp unlinks a device whose phone has been away about fourteen days: open WhatsApp on the account's phone` }
+        ? {
+            check: "phone",
+            status: "fail",
+            detail: `last phone activity (approximate) ${st.last_phone_activity}, ${days} days ago; WhatsApp unlinks a device whose phone has been away about fourteen days: open WhatsApp on the account's phone`,
+          }
         : { check: "phone", status: "ok", detail: `last phone activity (approximate) ${st.last_phone_activity}, ${days} days ago` },
     );
   } else checks.push({ check: "phone", status: "ok", detail: "no phone activity seen yet (approximate)" });
@@ -217,7 +248,12 @@ async function checkAccount(ctx: Ctx, e: AccountEntry, now: number): Promise<Che
 function legacyChecks(ctx: Ctx, name: string): Check[] {
   const old = legacyPaths(name, ctx.roots);
   return [
-    { check: "files", status: "fail", detail: `in the old layout (${old.configDir}, ${old.stateDir}); it is not used until moved`, fix: `whatsapp-axi account migrate ${name}` },
+    {
+      check: "files",
+      status: "fail",
+      detail: `in the old layout (${old.configDir}, ${old.stateDir}); it is not used until moved`,
+      fix: `whatsapp-axi account migrate ${name}`,
+    },
     ...ALL_ROWS.slice(1).map((c) => skipped(c, "the account in place")),
   ];
 }
@@ -227,7 +263,14 @@ function hooksCheck(ctx: Ctx): Check {
     const st = hookStatus(ctx, "user", hookDir(undefined, ctx.io.cwd));
     const broken = st.rows.filter((r) => r.status === "stale" || r.status === "error");
     if (broken.length) {
-      return { check: "hooks", status: "fail", detail: broken.map((r) => `${r.agent} ${r.status}${r.status === "error" ? ` (${st.problems.find((x) => x.path === r.path)?.problem ?? "unreadable"})` : ""}`).join(", "), fix: "whatsapp-axi setup hooks" };
+      return {
+        check: "hooks",
+        status: "fail",
+        detail: broken
+          .map((r) => `${r.agent} ${r.status}${r.status === "error" ? ` (${st.problems.find((x) => x.path === r.path)?.problem ?? "unreadable"})` : ""}`)
+          .join(", "),
+        fix: "whatsapp-axi setup hooks",
+      };
     }
     const installed = st.rows.filter((r) => r.status === "installed").map((r) => r.agent);
     if (!installed.length) return { check: "hooks", status: "skipped", detail: "not installed at user scope (optional)" };
@@ -271,7 +314,10 @@ export async function doctor(ctx: Ctx, args: string[]): Promise<unknown> {
   if (pin !== undefined) out.account_lock = `${pin} (${PIN_VAR}); doctor checks every account regardless`;
   try {
     const def = readDefault(ctx.roots);
-    if (def !== undefined && !entries.some((e) => e.name === def)) add("-", [{ check: "default", status: "fail", detail: `${configFile(ctx.roots)} names ${def}, which does not exist`, fix: "whatsapp-axi account use <name>" }]);
+    if (def !== undefined && !entries.some((e) => e.name === def))
+      add("-", [
+        { check: "default", status: "fail", detail: `${configFile(ctx.roots)} names ${def}, which does not exist`, fix: "whatsapp-axi account use <name>" },
+      ]);
   } catch (err) {
     add("-", [{ check: "default", status: "fail", detail: reasonOf(err) }]);
   }
@@ -284,13 +330,28 @@ export async function doctor(ctx: Ctx, args: string[]): Promise<unknown> {
     legacy = legacy.filter((n) => n === a);
     ctx.acted = { name: a, source: "flag" };
     if (!names.length && !legacy.length) {
-      add(a, [{ check: "files", status: "fail", detail: "no such account", fix: `whatsapp-axi account add ${a}` }, ...ALL_ROWS.slice(1).map((c) => skipped(c, "the account"))]);
+      add(a, [
+        { check: "files", status: "fail", detail: "no such account", fix: `whatsapp-axi account add ${a}` },
+        ...ALL_ROWS.slice(1).map((c) => skipped(c, "the account")),
+      ]);
     }
   }
   if (pin !== undefined && !entries.some((e) => e.name === pin)) {
-    add(pin, [{ check: "pin", status: "fail", detail: `${PIN_VAR} names an account that does not exist; every command fails with ACCOUNT_LOCK_INVALID`, fix: "whatsapp-axi accounts" }]);
+    add(pin, [
+      {
+        check: "pin",
+        status: "fail",
+        detail: `${PIN_VAR} names an account that does not exist; every command fails with ACCOUNT_LOCK_INVALID`,
+        fix: "whatsapp-axi accounts",
+      },
+    ]);
   }
-  const results = await Promise.all(names.map(async (e) => ({ account: e.name, checks: await checkAccount(ctx, e, now).catch((err): Check[] => [{ check: "doctor", status: "fail", detail: reasonOf(err) }]) })));
+  const results = await Promise.all(
+    names.map(async (e) => ({
+      account: e.name,
+      checks: await checkAccount(ctx, e, now).catch((err): Check[] => [{ check: "doctor", status: "fail", detail: reasonOf(err) }]),
+    })),
+  );
   for (const r of results) add(r.account, r.checks);
   for (const n of legacy) add(n, legacyChecks(ctx, n));
   add("(all)", [hooksCheck(ctx)]);
@@ -302,7 +363,9 @@ export async function doctor(ctx: Ctx, args: string[]): Promise<unknown> {
   }
   if (p.flags.summary) {
     return {
-      doctor: failed.length ? `${failed.length} failed of ${rows.length} checks: ${failed.map((r) => `${r.account} ${r.check}`).join(", ")}` : `all ${rows.length} checks passed`,
+      doctor: failed.length
+        ? `${failed.length} failed of ${rows.length} checks: ${failed.map((r) => `${r.account} ${r.check}`).join(", ")}`
+        : `all ${rows.length} checks passed`,
       ...(failed.length ? { help: ["Run `whatsapp-axi doctor` to see each check and its fix"] } : {}),
     };
   }
@@ -313,4 +376,3 @@ export async function doctor(ctx: Ctx, args: string[]): Promise<unknown> {
     ...(fixes.length ? { help: fixes } : {}),
   };
 }
-

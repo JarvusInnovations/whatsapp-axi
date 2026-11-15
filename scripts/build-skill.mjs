@@ -14,7 +14,7 @@ const current = readFileSync(path, "utf-8");
 const next = spliceGeneratedRegions(current, { "command-reference": commandReferenceMarkdown(GROUPS) });
 if (process.argv.includes("--check")) {
   if (next !== current) {
-    console.error("skills/whatsapp-axi/SKILL.md is stale: run the build and `docs`, then commit it");
+    console.error("skills/whatsapp-axi/SKILL.md is stale: run `bun run build && bun run docs`, then commit it");
     process.exit(1);
   }
   console.log("skills/whatsapp-axi/SKILL.md is current");

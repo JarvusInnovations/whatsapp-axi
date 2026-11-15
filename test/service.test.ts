@@ -11,7 +11,9 @@ let src: string;
 /** A stand-in daemon binary that reports a version. */
 function fakeBinary(version: string, tag = "a"): string {
   const p = join(env.home, `whatsapp-axid-${tag}`);
-  writeFileSync(p, `#!/bin/sh\n# ${tag}\n[ "$1" = version ] && echo "whatsapp-axid ${version}" && echo "go.mau.fi/whatsmeow v0" && exit 0\nexit 3\n`, { mode: 0o755 });
+  writeFileSync(p, `#!/bin/sh\n# ${tag}\n[ "$1" = version ] && echo "whatsapp-axid ${version}" && echo "go.mau.fi/whatsmeow v0" && exit 0\nexit 3\n`, {
+    mode: 0o755,
+  });
   return p;
 }
 
@@ -223,7 +225,10 @@ describe("daemon start, stop, restart, status, uninstall", () => {
 
 describe("daemon logs", () => {
   it("prints recent lines, says when there are none, and reports a failing journal", async () => {
-    service.logLines = ["2030-01-05T14:00:00+0000 host whatsapp-axid[1]: level=INFO msg=listening", "2030-01-05T14:00:01+0000 host whatsapp-axid[1]: level=INFO msg=state state=connected"];
+    service.logLines = [
+      "2030-01-05T14:00:00+0000 host whatsapp-axid[1]: level=INFO msg=listening",
+      "2030-01-05T14:00:01+0000 host whatsapp-axid[1]: level=INFO msg=state state=connected",
+    ];
     let r = await run(["daemon", "logs", "example", "--lines", "1"]);
     expect(r.code, r.out).toBe(0);
     expect(r.out).toContain("msg=state state=connected");
@@ -331,8 +336,8 @@ describe("daemon upgrade with several accounts", () => {
     try {
       const r = await run(["daemon", "upgrade"]);
       expect(r.code, r.out).toBe(1);
-      expect(r.out).toContain("example,unchanged,\"failed (SERVICE_NOT_READY");
-      expect(r.out).toContain("other,unchanged,\"failed (SERVICE_NOT_READY");
+      expect(r.out).toContain('example,unchanged,"failed (SERVICE_NOT_READY');
+      expect(r.out).toContain('other,unchanged,"failed (SERVICE_NOT_READY');
       expect(r.out).toContain("code: SERVICE_NOT_READY");
     } finally {
       READY.waitMs = saved;

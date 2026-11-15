@@ -34,7 +34,11 @@ export async function update(ctx: Ctx, args: string[]): Promise<unknown> {
     // The SDK's own codes are not this tool's; a registry or install failure is the upstream's.
     const message = err instanceof Error ? err.message : String(err);
     const help = err instanceof AxiError ? err.suggestions : [];
-    throw failure(`update failed: ${message}`, "UPSTREAM_ERROR", help.filter((h) => !/npm install -g/.test(h)));
+    throw failure(
+      `update failed: ${message}`,
+      "UPSTREAM_ERROR",
+      help.filter((h) => !/npm install -g/.test(h)),
+    );
   }
   if (p.flags.check) return res;
   let installed: string[] = [];

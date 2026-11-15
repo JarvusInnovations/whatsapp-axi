@@ -39,7 +39,8 @@ export async function accountRow(ctx: Ctx, e: AccountEntry, ms = ROW_TIMEOUT.ms)
     const s = await d.call("GET", "/v1/settings");
     const settings = s.settings as { scope?: unknown } | undefined;
     const phone = st.me?.pn ? { phone: st.me.pn } : {};
-    if (!settings || typeof settings.scope !== "string") return { name: e.name, state: st.state, scope: "unknown (UNEXPECTED_RESPONSE: settings without a scope)", ...phone };
+    if (!settings || typeof settings.scope !== "string")
+      return { name: e.name, state: st.state, scope: "unknown (UNEXPECTED_RESPONSE: settings without a scope)", ...phone };
     return { name: e.name, state: st.state, scope: settings.scope, ...phone };
   };
   let timer: NodeJS.Timeout | undefined;
@@ -108,7 +109,12 @@ async function homeView(ctx: Ctx): Promise<unknown> {
     const help = legacy.length
       ? [`Run \`whatsapp-axi account migrate\` to move ${legacy.join(", ")} from the old layout`]
       : ["Run `whatsapp-axi account add <name>` to create one"];
-    return { accounts: "0 accounts for this user", ...(legacy.length ? { old_layout: legacy.join(", ") } : {}), ...(pin ? { account_lock: `${pin} (${PIN_VAR}), which does not exist` } : {}), help: [...help, DISCOVERY] };
+    return {
+      accounts: "0 accounts for this user",
+      ...(legacy.length ? { old_layout: legacy.join(", ") } : {}),
+      ...(pin ? { account_lock: `${pin} (${PIN_VAR}), which does not exist` } : {}),
+      help: [...help, DISCOVERY],
+    };
   }
   const names = entries.map((e) => e.name);
   try {
@@ -117,7 +123,8 @@ async function homeView(ctx: Ctx): Promise<unknown> {
   } catch (err) {
     out.default = `unknown (${reasonOf(err)})`;
   }
-  if (pin !== undefined) out.account_lock = names.includes(pin) ? `${pin} (${PIN_VAR})` : `${pin} (${PIN_VAR}), which does not exist: every command fails with ACCOUNT_LOCK_INVALID`;
+  if (pin !== undefined)
+    out.account_lock = names.includes(pin) ? `${pin} (${PIN_VAR})` : `${pin} (${PIN_VAR}), which does not exist: every command fails with ACCOUNT_LOCK_INVALID`;
   out.writes = writesLine(ctx, names);
   const rows = await Promise.all(entries.map((e) => accountRow(ctx, e)));
   out.accounts = rows.map((r) => ({ name: r.name, state: r.state, scope: r.scope }));
@@ -143,7 +150,12 @@ export const accountsSpec: CommandSpec = {
 
 export async function accounts(ctx: Ctx, args: string[]): Promise<unknown> {
   const p = parse(accountsSpec, args);
-  const extra = p.flags.fields === undefined ? [] : String(p.flags.fields).split(",").map((s) => s.trim());
+  const extra =
+    p.flags.fields === undefined
+      ? []
+      : String(p.flags.fields)
+          .split(",")
+          .map((s) => s.trim());
   for (const f of extra) if (f !== "phone") throw invalid(`unknown field ${JSON.stringify(f)} for \`accounts\``, ["fields available: phone"]);
   const all = accountEntries(ctx.roots);
   let entries = all;
@@ -181,7 +193,9 @@ export const accountAddSpec: CommandSpec = {
 
 function checkNewName(name: string): string {
   if (!validAccount(name)) {
-    throw invalid(`bad account name ${JSON.stringify(name)}: names match ^[a-z][a-z0-9-]{0,23}$ and may not be \`accounts\` or \`config.json\` (a local label, not a phone number)`);
+    throw invalid(
+      `bad account name ${JSON.stringify(name)}: names match ^[a-z][a-z0-9-]{0,23}$ and may not be \`accounts\` or \`config.json\` (a local label, not a phone number)`,
+    );
   }
   return name;
 }
@@ -201,7 +215,9 @@ export async function accountAdd(ctx: Ctx, args: string[]): Promise<unknown> {
   const name = namedAccount(ctx, p.pos[0]);
   if (accountExists(name, ctx.roots)) return { action: "unchanged", reason: `account ${name} already exists (no-op)` };
   if (legacyAccounts(ctx.roots).includes(name)) {
-    throw invalid(`account ${name} exists in the old layout, directly under the config or state directory; it was not created again`, [`Run \`whatsapp-axi account migrate ${name}\` to move it into place`]);
+    throw invalid(`account ${name} exists in the old layout, directly under the config or state directory; it was not created again`, [
+      `Run \`whatsapp-axi account migrate ${name}\` to move it into place`,
+    ]);
   }
   const bin = findDaemon(ctx.io.env);
   const r = await runDaemon(bin, ["init", "--account", name], ctx.io.env);
@@ -209,7 +225,10 @@ export async function accountAdd(ctx: Ctx, args: string[]): Promise<unknown> {
     if (accountExists(name, ctx.roots)) return { action: "unchanged", reason: `account ${name} already exists (no-op)` };
     throw failure(`Could not create account ${name}: ${daemonMessage(r.stderr)}`, "ACCOUNT_ADD_FAILED", ["Run `whatsapp-axi doctor` to check the files"]);
   }
-  if (!accountExists(name, ctx.roots)) throw failure(`The daemon binary reported success but account ${name} has no directory.`, "ACCOUNT_ADD_FAILED", ["Run `whatsapp-axi doctor` to check the files"]);
+  if (!accountExists(name, ctx.roots))
+    throw failure(`The daemon binary reported success but account ${name} has no directory.`, "ACCOUNT_ADD_FAILED", [
+      "Run `whatsapp-axi doctor` to check the files",
+    ]);
   const af = acctFlag(ctx, name);
   return {
     action: "created",
@@ -239,7 +258,8 @@ export async function accountRemove(ctx: Ctx, args: string[]): Promise<unknown> 
   const p = parse(accountRemoveSpec, args);
   const name = namedAccount(ctx, p.pos[0]);
   const again = `Run \`whatsapp-axi account remove ${name} --confirm ${name}\` to delete it and everything it kept`;
-  if (p.flags.confirm === undefined) throw confirmRequired(`deleting account ${name} destroys its session and everything it kept; repeat the name with --confirm ${name}`, [again]);
+  if (p.flags.confirm === undefined)
+    throw confirmRequired(`deleting account ${name} destroys its session and everything it kept; repeat the name with --confirm ${name}`, [again]);
   if (p.flags.confirm !== name) throw confirmRequired(`--confirm ${JSON.stringify(p.flags.confirm)} does not match the account name ${name}`, [again]);
   const paths = accountPaths(name, ctx.roots);
   if (!existsSync(paths.configDir) && !existsSync(paths.stateDir)) return { action: "unchanged", reason: `account ${name} does not exist (no-op)` };
@@ -248,7 +268,9 @@ export async function accountRemove(ctx: Ctx, args: string[]): Promise<unknown> 
   if (r.code !== 0) {
     const msg = daemonMessage(r.stderr);
     if (msg.includes("daemon is running")) {
-      throw failure(`Account ${name}'s daemon is running; it was not removed.`, "DAEMON_RUNNING", [`Run \`whatsapp-axi daemon stop ${name}\` to stop it (or stop the foreground \`daemon run\`), then run this again`]);
+      throw failure(`Account ${name}'s daemon is running; it was not removed.`, "DAEMON_RUNNING", [
+        `Run \`whatsapp-axi daemon stop ${name}\` to stop it (or stop the foreground \`daemon run\`), then run this again`,
+      ]);
     }
     throw failure(`Could not remove account ${name}: ${msg}`, "ACCOUNT_REMOVE_FAILED", ["Run `whatsapp-axi doctor` to check the files"]);
   }
@@ -272,13 +294,17 @@ export async function accountUse(ctx: Ctx, args: string[]): Promise<unknown> {
   const name = namedAccount(ctx, p.pos[0]);
   const names = accountEntries(ctx.roots).map((e) => e.name);
   if (!names.includes(name)) {
-    throw failure(`No account named ${name}.`, "NO_ACCOUNT", [...(names.length ? [`Accounts: ${names.join(", ")}`] : []), `Run \`whatsapp-axi account add ${name}\` to create it`]);
+    throw failure(`No account named ${name}.`, "NO_ACCOUNT", [
+      ...(names.length ? [`Accounts: ${names.join(", ")}`] : []),
+      `Run \`whatsapp-axi account add ${name}\` to create it`,
+    ]);
   }
   const prev = readDefault(ctx.roots);
   if (prev === name) return { action: "unchanged", reason: `${name} is already the default (no-op)` };
   writeDefault(ctx.roots, name);
   const after = readDefault(ctx.roots);
-  if (after !== name) throw failure(`The default was written but reads back as ${after ?? "unset"}.`, "CONFIG_INVALID", ["Run `whatsapp-axi doctor` to check the files"]);
+  if (after !== name)
+    throw failure(`The default was written but reads back as ${after ?? "unset"}.`, "CONFIG_INVALID", ["Run `whatsapp-axi doctor` to check the files"]);
   return {
     action: "set",
     default: name,
@@ -352,7 +378,9 @@ export async function daemonRun(ctx: Ctx, args: string[]): Promise<string> {
     const forward = (sig: NodeJS.Signals) => child.kill(sig);
     process.on("SIGINT", forward);
     process.on("SIGTERM", forward);
-    child.on("error", (e) => reject(failure(`Cannot run the daemon binary ${bin}: ${e.message}`, "DAEMON_BINARY_FAILED", ["Run `whatsapp-axi doctor` to check the binary"])));
+    child.on("error", (e) =>
+      reject(failure(`Cannot run the daemon binary ${bin}: ${e.message}`, "DAEMON_BINARY_FAILED", ["Run `whatsapp-axi doctor` to check the binary"])),
+    );
     child.on("close", (c, signal) => {
       process.off("SIGINT", forward);
       process.off("SIGTERM", forward);
@@ -360,7 +388,9 @@ export async function daemonRun(ctx: Ctx, args: string[]): Promise<string> {
     });
   });
   if (code !== 0) {
-    throw failure(`The daemon of account ${name} exited with status ${code}; its message is above, on standard error.`, "DAEMON_EXITED", ["Run `whatsapp-axi doctor` to check the account"]);
+    throw failure(`The daemon of account ${name} exited with status ${code}; its message is above, on standard error.`, "DAEMON_EXITED", [
+      "Run `whatsapp-axi doctor` to check the account",
+    ]);
   }
   return line({ account: name, action: "stopped" });
 }

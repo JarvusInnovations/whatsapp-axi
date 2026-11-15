@@ -121,7 +121,19 @@ describe("usage errors", () => {
 
   it("missing values, missing arguments and extra arguments exit 2", async () => {
     addAccount(env, "example");
-    const cases = [["events", "--after"], ["events", "--limit", "--follow"], ["read"], ["chat", "view"], ["chats", "extra"], ["scope"], ["account", "add"], ["chats", "--account"], ["chats", "--account", "a", "--account", "b"], ["chats", "--limit", "1", "--limit", "2"], ["-x"]];
+    const cases = [
+      ["events", "--after"],
+      ["events", "--limit", "--follow"],
+      ["read"],
+      ["chat", "view"],
+      ["chats", "extra"],
+      ["scope"],
+      ["account", "add"],
+      ["chats", "--account"],
+      ["chats", "--account", "a", "--account", "b"],
+      ["chats", "--limit", "1", "--limit", "2"],
+      ["-x"],
+    ];
     for (const argv of cases) {
       const r = await run(argv);
       expect(r.code, argv.join(" ")).toBe(2);
@@ -131,7 +143,17 @@ describe("usage errors", () => {
 
   it("bad values, contradictions and unknown subcommands are VALIDATION_ERROR, exit 2", async () => {
     addAccount(env, "example");
-    const cases = [["scope", "nope"], ["bogus"], ["events", "--kind", "bogus"], ["events", "--limit", "abc"], ["chats", "--fields", "nope"], ["auth", "link", "--phone", "+15550100000", "--qr"], ["mark-read", "x/y", "--chat", "x"], ["chats", "--tz", "Mars/Olympus"], ["chats", "--account", "Not Valid"]];
+    const cases = [
+      ["scope", "nope"],
+      ["bogus"],
+      ["events", "--kind", "bogus"],
+      ["events", "--limit", "abc"],
+      ["chats", "--fields", "nope"],
+      ["auth", "link", "--phone", "+15550100000", "--qr"],
+      ["mark-read", "x/y", "--chat", "x"],
+      ["chats", "--tz", "Mars/Olympus"],
+      ["chats", "--account", "Not Valid"],
+    ];
     for (const argv of cases) {
       const r = await run(argv);
       expect(r.code, argv.join(" ")).toBe(2);
@@ -300,7 +322,13 @@ describe("output vocabulary", () => {
     const { FakeDaemon, socketPath } = await import("./helpers.js");
     addAccount(env, "example");
     const fake = new FakeDaemon();
-    fake.route("GET /v1/messages", () => ({ body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [{ id: "3EB0AAAA0000000001", t: "2030-07-05T14:00:00Z", from: { id: "1@lid", name: "Sam" }, text: "hi" }], more: false } }));
+    fake.route("GET /v1/messages", () => ({
+      body: {
+        chat: { id: GROUP, type: "group", name: "x" },
+        messages: [{ id: "3EB0AAAA0000000001", t: "2030-07-05T14:00:00Z", from: { id: "1@lid", name: "Sam" }, text: "hi" }],
+        more: false,
+      },
+    }));
     await fake.listen(socketPath(env, "example"));
     try {
       let r = await run(["read", GROUP, "--tz", "Europe/Berlin"]);

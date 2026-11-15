@@ -146,7 +146,10 @@ export const sendFileSpec: CommandSpec = {
     "first-contact": FIRST,
     id: ID,
   },
-  examples: ["whatsapp-axi send-file 120363000000000001@g.us ./report.pdf --caption \"The report\"", "whatsapp-axi send-file +15550100001 ./photo.png --as document"],
+  examples: [
+    'whatsapp-axi send-file 120363000000000001@g.us ./report.pdf --caption "The report"',
+    "whatsapp-axi send-file +15550100001 ./photo.png --as document",
+  ],
   mutation: true,
   jsonOut: true,
 };
@@ -190,7 +193,8 @@ export async function react(ctx: Ctx, args: string[]): Promise<unknown> {
   const [ref, emojiArg] = p.pos;
   const remove = p.flags.remove === true;
   if (remove && emojiArg !== undefined) throw contradiction("an emoji", "--remove");
-  if (!remove && !emojiArg) throw usage("<emoji> is required (or --remove)", ["usage: whatsapp-axi react <ref> <emoji>", "usage: whatsapp-axi react <ref> --remove"]);
+  if (!remove && !emojiArg)
+    throw usage("<emoji> is required (or --remove)", ["usage: whatsapp-axi react <ref> <emoji>", "usage: whatsapp-axi react <ref> --remove"]);
   const { chat, id } = refOf(ref);
   const name = account(ctx);
   const d = ctx.daemon(name);
@@ -201,7 +205,12 @@ export async function react(ctx: Ctx, args: string[]): Promise<unknown> {
   expect(d, typeof res.changed === "boolean" && typeof res.chat === "string", "react answer is missing fields");
   const target = `${res.chat as string}/${id}`;
   const warning = typeof res.warning === "string" && res.warning ? { warning: res.warning } : {};
-  if (!res.changed) return { action: "unchanged", reason: remove ? `no reaction of this account on ${target} (no-op)` : `${emojiArg} already on ${target} (no-op)`, ...warning };
+  if (!res.changed)
+    return {
+      action: "unchanged",
+      reason: remove ? `no reaction of this account on ${target} (no-op)` : `${emojiArg} already on ${target} (no-op)`,
+      ...warning,
+    };
   if (remove) return { action: "unreacted", message: target, ...warning };
   return { action: "reacted", message: target, emoji: emojiArg, ...warning, help: [`Run \`whatsapp-axi react ${target} --remove${af}\` to undo`] };
 }
@@ -253,7 +262,8 @@ export async function markRead(ctx: Ctx, args: string[]): Promise<unknown> {
   const ref = p.pos[0];
   const chatFlag = p.flags.chat as string | undefined;
   if (ref !== undefined && chatFlag !== undefined) throw contradiction("a message <ref>", "--chat <chat>");
-  if (ref === undefined && chatFlag === undefined) throw usage("give a message <ref> or --chat <chat>", ["usage: whatsapp-axi mark-read <chat>/<id>", "usage: whatsapp-axi mark-read --chat <chat>"]);
+  if (ref === undefined && chatFlag === undefined)
+    throw usage("give a message <ref> or --chat <chat>", ["usage: whatsapp-axi mark-read <chat>/<id>", "usage: whatsapp-axi mark-read --chat <chat>"]);
   const body: Obj = {};
   if (ref !== undefined) {
     const { chat, id } = refOf(ref);
@@ -306,7 +316,14 @@ export async function typing(ctx: Ctx, args: string[]): Promise<unknown> {
   const res = await d.call("POST", "/v1/typing", { chat: p.pos[0], on });
   expect(d, typeof res.chat === "string" && typeof res.typing === "boolean", "typing answer is missing fields");
   const chat = res.chat as string;
-  if (on) return { action: "set", chat, typing: true, note: "clears on a send to the chat, on --stop, or after two minutes", help: [`Run \`whatsapp-axi typing ${chat} --stop${acctFlag(ctx, name)}\` to clear it`] };
+  if (on)
+    return {
+      action: "set",
+      chat,
+      typing: true,
+      note: "clears on a send to the chat, on --stop, or after two minutes",
+      help: [`Run \`whatsapp-axi typing ${chat} --stop${acctFlag(ctx, name)}\` to clear it`],
+    };
   if (res.changed === false) return { action: "unchanged", chat, reason: "the account was not typing there (no-op)" };
   return { action: "removed", chat, typing: false };
 }
