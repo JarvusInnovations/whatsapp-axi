@@ -1,5 +1,6 @@
 ---
-status: in-progress
+status: done
+pr: 10
 depends: [daemon-core]
 specs:
   - specs/daemon.md
