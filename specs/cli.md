@@ -10,11 +10,28 @@
   with an error, or returns something the CLI cannot parse, the command fails with exit 1. It
   never prints an empty list, a zero or a success in that case. A mutation reports success only
   after the daemon confirmed it.
-- **`--json`** on every command prints one JSON document instead of TOON, for scripts: on
-  success the daemon's response body unchanged (for a streaming command, one JSON object per
-  line), and on failure `{"error": {"code", "message", …}}` with the same exit code. Commands
-  that do not call the daemon print the same data they would print as TOON. Field names in
-  `--json` output are part of the interface and change only with the protocol version.
+- **`--json-out[=path]`**, for scripts. Standard output is always the TOON view; there is no
+  JSON mode on standard output. A command that calls the daemon accepts `--json-out`, which
+  also writes the daemon's complete response body, unchanged and uncapped, to a file:
+  - With `=path` the file is written there. The path is given only with `=`; a bare
+    `--json-out` followed by an argument ending in `.json` is a usage error that says to write
+    `--json-out=<that>`.
+  - Bare, the file is created in `<os-temp-dir>/whatsapp-axi/`, named by time and command.
+  - Either way the file is created owner-only (`0600`), or truncated, never through a symlink,
+    and it is opened before the daemon is called, so a path that cannot be written fails the
+    command before anything is sent.
+  - A streaming command (`events --follow`, `auth link`) appends one JSON object per line as
+    each arrives.
+  - When the daemon answers with an error, the file receives `{"error": {…}}` exactly as the
+    daemon sent it, standard output carries the usual structured error, and the exit code is
+    unchanged. A script reads the outcome from the file and the exit code, never from TOON.
+  - When a file is written, standard output adds a `wrote: <path> (<what it holds>)` line and a
+    `help` entry with a ready-to-run `jq` example against that path. Nothing else about the
+    TOON view changes.
+  - Field names in the file are the socket protocol's, and change only with its version.
+  - Commands that do not call the daemon (`accounts`, `account add`, the `daemon` commands,
+    `doctor`) take no `--json-out`, except `doctor` and `daemon status`, which write the same
+    rows they print.
 - **Errors** are structured, on standard output, with a `help` line naming the command that fixes
   the problem. Daemon error codes ([socket-protocol.md](socket-protocol.md)) are passed through as
   `code`.
