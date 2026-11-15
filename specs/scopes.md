@@ -26,7 +26,12 @@ gets to decide:
 - the sender's display name
 - for some messages, a per-message secret stored with the chat, sender and message id
 
-These live in `session.db`. None of them is message content. The README states this limit in plain
+These live in `session.db`. None of them is message content.
+
+One more limit, stated for the same reason: in a `tagged` group the daemon holds recently discarded
+messages **in memory** for a bounded time, so that the parent of a later mention can be kept whole
+("The parent of a mention" below). They are never written, logged or returned unless a mention
+pulls one in, at which point it is a kept message. The README states this limit in plain
 words next to any description of scopes.
 
 ## Account scope
@@ -63,25 +68,47 @@ In a group under `tagged`, an incoming message is kept if and only if at least o
 1. **It mentions the account.** The message's mention list contains the account (either of its two
    ids; see [identity.md](identity.md)). The mention list can be on a text message or on any media
    message with a caption; all are checked.
-2. **It replies to a kept message in the same chat.** The message quotes a message id that is in
+2. **It is the parent of a reply that mentions the account.** Someone replies to a message and
+   mentions the account in the reply: the message they replied to is kept too, so a person can
+   bring the account into any message by replying to it with a mention. See "The parent of a
+   mention" below.
+3. **It replies to a kept message in the same chat.** The message quotes a message id that is in
    `store.db` for that chat. That covers:
    - a reply to a message that mentioned the account
+   - a reply to a parent kept by rule 2, arriving after it was kept
    - a reply to one of the account's own messages
    - a reply to a message kept by this same rule, so a thread that started with a mention or with
      the account's own message stays in view as people keep replying down it
-3. **It is the account's own message.**
+4. **It is the account's own message.**
 
 Everything else in the group is discarded.
 
 ### The parent of a mention
 
-When a kept message is a reply, the daemon records the quoted parent **as context on that message**:
-the parent's id, its sender, and its text or caption as carried inside the reply.
+When a reply that mentions the account arrives, its parent has usually already gone by and been
+discarded. The daemon keeps the parent at that moment, from the best source it has:
 
-- The parent is not itself a kept message. A different reply to the same parent is **not** kept by
-  rule 2 unless it also mentions the account.
-- The parent's media is not available: only what the reply carried as text.
-- If the parent is already a kept message, the context links to it instead of duplicating it.
+1. **The recent-message buffer.** For each group under `tagged`, the daemon holds the most recent
+   discarded messages **in memory only**: at most 500 messages and at most 48 hours, per group. If
+   the parent is in the buffer it is kept whole, with its media descriptor, exactly as if it had
+   been kept on arrival.
+2. **The quoted copy.** Otherwise the daemon keeps what the reply carried: the parent's id, its
+   sender, its text or caption, and its media descriptor when the copy includes one. The kept
+   parent is marked `partial`, and its media may not be downloadable.
+
+In both cases:
+
+- The parent becomes an ordinary kept message, with `kept_by: parent` and its original time when
+  known. Its event is emitted immediately before the event of the reply that brought it in.
+- Replies to it that arrive **afterwards** are kept by rule 3. Replies to it that arrived
+  **before** the mention are not recovered: only the direct parent is.
+- A parent that is already kept is left as it is.
+- Only a reply that itself mentions the account pulls its parent in. A reply kept by rule 3 does
+  not.
+
+The buffer is never written to disk, is not readable through any request, and is gone when the
+daemon stops. A message that leaves the buffer without being pulled in is gone for good. Setting
+`parent_buffer: false` turns the buffer off, leaving only the quoted copy.
 
 ### Who can trigger the account
 
@@ -155,12 +182,16 @@ The scope filter is a pure function over an incoming event, the account's ids, t
 lookup of kept message ids. It is tested without any WhatsApp connection.
 
 - **Every rule above has a test**, including: mention on a caption; mention by either of the
-  account's ids; reply chains several levels deep; a second reply to an un-kept parent staying
-  discarded; an edit that adds a mention; a revoke of a kept message; `dm_from` both ways; each
+  account's ids; the parent of a mentioning reply kept whole from the buffer and kept `partial`
+  from the quoted copy when the buffer does not have it; the parent's event preceding the reply's;
+  a non-mentioning reply to a discarded parent staying discarded and not pulling the parent in;
+  reply chains several levels deep, including under a kept parent; an edit that adds a mention; a revoke of a kept message; `dm_from` both ways; each
   per-chat override.
 - **Leaves no trace.** A test feeds the daemon a discarded message whose text, caption, quoted
   copy and file name each contain a unique marker, then reads every byte of every file under the
   account's config and state directories and every response the socket can produce, and fails if
-  the marker appears anywhere. The same test asserts the chat's counter went up by one.
+  the marker appears anywhere. The same test asserts the chat's counter went up by one. It runs
+  with the recent-message buffer on, and again after the buffer's limits have pushed the message
+  out.
 - **The live check.** The pilot procedure repeats the marker test against a real account, and its
   search includes `session.db`, since unit tests cannot exercise the library's own writes.

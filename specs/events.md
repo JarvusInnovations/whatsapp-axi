@@ -43,7 +43,7 @@ this (shown as JSON; the CLI prints TOON):
       "id": "3EB0AAAA0000000000",
       "from": { "id": "100000000000002@lid", "name": "Alex", "me": false, "operator": false },
       "text": "the report is attached",
-      "kept": false
+      "kept": true
     },
     "media": { "type": "document", "mime": "application/pdf", "name": "report.pdf", "size": 48213 }
   }
@@ -57,14 +57,15 @@ this (shown as JSON; the CLI prints TOON):
 | `id` | WhatsApp's message id |
 | `from` | the sender, as a user object ([identity.md](identity.md)) |
 | `text` | the message text. For media, the caption. Empty when there is none |
-| `kept_by` | why it was kept: `mention`, `reply`, `own`, `dm` or `full` |
+| `kept_by` | why it was kept: `mention`, `parent`, `reply`, `own`, `dm` or `full` |
+| `partial` | true when a parent was kept from a quoted copy instead of the original ([scopes.md](scopes.md)) |
 | `mentions_me` | whether the message mentions the account |
 | `mentions` | other mentioned users, as user objects. Omitted when empty |
-| `reply_to` | present when the message is a reply: the parent's `id`, `from`, its `text` as carried in the reply, and `kept` (whether the parent is itself a kept message) |
+| `reply_to` | present when the message is a reply: the parent's `id`, `from`, its `text` as carried in the reply, and `kept` (whether the parent is itself a kept message; always true for a reply that mentions the account) |
 | `media` | present when the message has media: `type`, `mime`, `name`, `size`, and `view_once` when true. Never any key material |
 | `ephemeral` | present with the timer in seconds when the chat has disappearing messages on |
 
-`kept_by` reports the first rule that matched, in the order mention, reply, own for groups.
+`kept_by` reports the first rule that matched, in the order mention, parent, reply, own for groups.
 
 ## Reading events
 

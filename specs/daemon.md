@@ -101,6 +101,7 @@ delete `store.db`.
 | `dm_from` | `operators` | whose direct messages are kept |
 | `chats` | `{}` | per-chat scope overrides, by chat id |
 | `operators` | `[]` | phone numbers or hidden ids ([identity.md](identity.md)) |
+| `parent_buffer` | `true` | hold recent discarded group messages in memory so a mentioned parent is kept whole ([scopes.md](scopes.md)) |
 | `wake_file` | unset | path to append wake lines to ([events.md](events.md)) |
 | `retain_days` | 90, or 0 for `full` | retention of kept content |
 | `presence` | `true` | announce availability on connect |
