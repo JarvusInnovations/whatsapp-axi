@@ -121,3 +121,75 @@ jobs:
 
       - name: Test
         run: bun run test
+
+  packages:
+    name: Packages (licences, cross-compile, installed smoke test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .tool-versions
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: daemon/go.sum
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the CLI
+        run: bun run build
+
+      - name: Licence gate (every compiled-in dependency is on daemon/licenses-allowed.json)
+        run: bun run check:licenses
+
+      - name: Cross-compile all four targets and assemble the five packages
+        run: bun run build:packages
+
+      - name: Pack each package (dry run)
+        run: |
+          set -euo pipefail
+          for d in release/*/; do
+            echo "::group::$d"
+            (cd "$d" && npm pack --dry-run)
+            echo "::endgroup::"
+          done
+
+      # Installs the packed main package and the runner's platform package from local tarballs into
+      # a temp prefix, at a version no registry has, so the daemon the CLI finds can only be the one
+      # packed here. Then runs the installed CLI against a temp home.
+      - name: Smoke test the installed package
+        run: |
+          set -euo pipefail
+          version=0.0.0-ci
+          target=$(node -p 'process.platform + "-" + process.arch')
+          tmp=$(mktemp -d)
+          node scripts/build-packages.mjs --out "$tmp/pkgs" --version "$version" --only "$target"
+          mkdir "$tmp/tgz"
+          for p in whatsapp-axi "whatsapp-axi-$target"; do (cd "$tmp/pkgs/$p" && npm pack --pack-destination "$tmp/tgz"); done
+          npm install -g --prefix "$tmp/prefix" --no-audit --no-fund "$tmp/tgz/whatsapp-axi-$version.tgz" "$tmp/tgz/whatsapp-axi-$target-$version.tgz"
+          export PATH="$tmp/prefix/bin:$PATH" HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/config" XDG_STATE_HOME="$tmp/state" XDG_DATA_HOME="$tmp/data" XDG_RUNTIME_DIR="$tmp/run" WHATSAPP_AXI_DISABLE_HOOKS=1
+          mkdir -p "$HOME" "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          cd "$tmp"
+          test "$(command -v whatsapp-axi)" = "$tmp/prefix/bin/whatsapp-axi"
+          got=$(whatsapp-axi --version)
+          if [ "$got" != "$version" ]; then echo "::error::--version printed $got, not $version"; exit 1; fi
+          set +e
+          doctor=$(whatsapp-axi doctor 2>&1); c1=$?
+          add=$(whatsapp-axi account add example 2>&1); c2=$?
+          plan=$(whatsapp-axi daemon install example --dry-run 2>&1); c3=$?
+          set -e
+          printf '%s\n---\n%s\n---\n%s\n' "$doctor" "$add" "$plan"
+          if [ "$c1" -ne 0 ]; then echo "::error::doctor with no accounts: exit $c1"; exit 1; fi
+          if [ "$c2" -ne 0 ] || ! echo "$add" | grep -q '^action: created$'; then echo "::error::account add example failed: the CLI did not run the installed daemon"; exit 1; fi
+          if [ ! -d "$XDG_CONFIG_HOME/whatsapp-axi/accounts/example" ]; then echo "::error::account add created no account directory"; exit 1; fi
+          if [ "$c3" -ne 0 ] || ! echo "$plan" | grep -q "from: $tmp/prefix/lib/node_modules/whatsapp-axi-$target/bin/whatsapp-axid"; then echo "::error::daemon install would not copy the installed platform package's binary"; exit 1; fi
+          if echo "$doctor$add$plan" | grep -qE '^\s+at |node:internal'; then echo "::error::a stack trace reached the output"; exit 1; fi
+          echo "installed-package smoke test passed"

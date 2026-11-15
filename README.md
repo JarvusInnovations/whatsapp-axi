@@ -3,8 +3,9 @@
 Agent-ergonomic CLI and local daemon for WhatsApp accounts.
 
 **Status: works from a source checkout on Linux; not yet published to npm.** The daemon and the CLI
-are built and in a pilot with one account. There is no release package yet, so install from source
-(below). macOS service management comes later; `daemon run` works there in the foreground.
+are built and in a pilot with one account. The release packages are built and tested in CI, but
+none is on the registry yet, so for now install from source (below). macOS service management
+comes later; `daemon run` works there in the foreground.
 
 ## What it is
 
@@ -32,6 +33,23 @@ most 48 hours) so that a message someone replies to with a mention can be kept w
 never written to disk, and are gone when the daemon stops. See [`specs/scopes.md`](specs/scopes.md).
 
 How each of these works is decided in [`specs/`](specs/), not here.
+
+## Install
+
+**Not yet published.** Once the first release is on npm, one command installs the CLI and, through
+an optional dependency, the prebuilt daemon for your platform (Linux or macOS, x64 or arm64), with
+no Go toolchain and nothing run at install time:
+
+```sh
+npm install -g whatsapp-axi     # not yet published: use the source install below until then
+whatsapp-axi doctor
+```
+
+The daemon comes in a platform package (`whatsapp-axi-linux-x64`, `-linux-arm64`, `-darwin-arm64`,
+`-darwin-x64`). An install with `--omit=optional` leaves it out, and the CLI then says which one is
+missing. `whatsapp-axi update` upgrades the package, and the platform package with it;
+`whatsapp-axi daemon upgrade` then puts the new daemon in place. Maintainers: see
+[`docs/releasing.md`](docs/releasing.md).
 
 ## Install from source
 
@@ -138,6 +156,7 @@ or abusive. Use a number you can afford to lose, and keep volumes human.
 | `bin/`, `src/`, `test/` | the TypeScript CLI (`whatsapp-axi`) |
 | `specs/` | what should be true |
 | `plans/` | work in flight, per the plan protocol |
+| `packaging/` | the platform package template and the release targets |
 | `docs/research/` | research notes that feed the specs; not specs themselves |
 
 ## Development
@@ -156,15 +175,28 @@ bun run build:daemon   # daemon/bin/whatsapp-axid, stamped with the version in p
 
 # CLI
 bun install && bun run lint && bun run format:check && bun run typecheck && bun run build && bun run test && bun run docs:check && bun run check:scrub
+
+# release packages (needs the CLI built): the licence gate, then all five packages in release/
+bun run check:licenses && bun run build:packages
 ```
 
 ## Licence
 
-The source in this repository is MIT, see [LICENSE](LICENSE).
+In plain words; this is not legal advice.
 
-The daemon links [whatsmeow](https://github.com/tulir/whatsmeow) (MPL-2.0), which in turn links
-`go.mau.fi/libsignal` (**GPL-3.0**). A compiled daemon binary is therefore a combined work that can
-only be distributed under GPL-3.0 terms, with its complete source offered alongside. The CLI is a
-separate program that talks to the daemon over a socket. See
-[`docs/research/whatsmeow.md`](docs/research/whatsmeow.md#licence) for the details; this is not
-legal advice.
+- **The source** in this repository is MIT, see [LICENSE](LICENSE).
+- **The daemon binaries are GPL-3.0.** The daemon links [whatsmeow](https://github.com/tulir/whatsmeow)
+  (MPL-2.0), which links `go.mau.fi/libsignal` (**GPL-3.0**). A compiled `whatsapp-axid` is
+  therefore a combined work, distributed under GPL-3.0-only. Each platform package
+  (`whatsapp-axi-<os>-<cpu>`) contains the GPL-3.0 text, a `NOTICES` file listing every
+  compiled-in dependency with its version and licence, and `SOURCE.md`, which says where the
+  complete corresponding source is: this repository at the release tag, plus the dependency
+  versions in `NOTICES`.
+- **The CLI** (`whatsapp-axi`) is a separate program that talks to the daemon over a socket, and
+  is MIT. The npm package `whatsapp-axi` is the CLI only.
+- **A CI check** (`bun run check:licenses`) lists the licences of the daemon's dependencies and
+  fails on any that is not on the allow-list in
+  [`daemon/licenses-allowed.json`](daemon/licenses-allowed.json), so a dependency update cannot
+  change this position unnoticed.
+
+See [`docs/research/whatsmeow.md`](docs/research/whatsmeow.md#licence) for the details.

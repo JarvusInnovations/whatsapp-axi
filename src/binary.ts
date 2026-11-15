@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { failure } from "./errors.js";
 
-export function platformPackage(platform = process.platform, arch = process.arch): string | undefined {
+export function platformPackage(platform: string = process.platform, arch: string = process.arch): string | undefined {
   const os = platform === "linux" || platform === "darwin" ? platform : undefined;
   const cpu = arch === "x64" || arch === "arm64" ? arch : undefined;
   return os && cpu ? `whatsapp-axi-${os}-${cpu}` : undefined;
@@ -32,6 +32,8 @@ export interface Lookup {
   env?: Record<string, string | undefined>;
   root?: string | undefined;
   resolvePackage?: (name: string) => string | undefined;
+  platform?: string;
+  arch?: string;
 }
 
 function defaultResolve(name: string): string | undefined {
@@ -44,7 +46,7 @@ function defaultResolve(name: string): string | undefined {
 
 export function findDaemon(envOrLookup: Record<string, string | undefined> | Lookup = {}): string {
   const o: Lookup =
-    "env" in envOrLookup || "root" in envOrLookup || "resolvePackage" in envOrLookup
+    "env" in envOrLookup || "root" in envOrLookup || "resolvePackage" in envOrLookup || "platform" in envOrLookup
       ? (envOrLookup as Lookup)
       : { env: envOrLookup as Record<string, string | undefined> };
   const env = o.env ?? process.env;
@@ -60,22 +62,33 @@ export function findDaemon(envOrLookup: Record<string, string | undefined> | Loo
     const local = join(root, "daemon", "bin", "whatsapp-axid");
     if (existsSync(local)) return local;
   }
-  const pkg = platformPackage();
+  const platform = o.platform ?? process.platform;
+  const arch = o.arch ?? process.arch;
+  const pkg = platformPackage(platform, arch);
   if (pkg) {
     const dir = (o.resolvePackage ?? defaultResolve)(pkg);
     if (dir && existsSync(join(dir, "bin", "whatsapp-axid"))) return join(dir, "bin", "whatsapp-axid");
   }
+  // A source checkout (the CLI's root holds daemon/go.mod) builds its own binary; an installed
+  // package gets its platform package back from a reinstall, or uses a binary built from source.
+  if (root && existsSync(join(root, "daemon", "go.mod"))) {
+    throw failure("No whatsapp-axid daemon binary found: this source checkout has not built one.", "DAEMON_BINARY_MISSING", [
+      "Run `bun run build:daemon` in the checkout to build daemon/bin/whatsapp-axid",
+    ]);
+  }
   throw failure(
     pkg
-      ? `No whatsapp-axid daemon binary found: the platform package ${pkg} is not installed.`
-      : `No whatsapp-axid daemon binary found, and no platform package exists for ${process.platform}-${process.arch}.`,
+      ? `No whatsapp-axid daemon binary found: the platform package ${pkg} is not installed (an install with --omit=optional or --no-optional leaves it out).`
+      : `No whatsapp-axid daemon binary found, and no platform package exists for ${platform}-${arch}.`,
     "DAEMON_BINARY_MISSING",
     [
-      ...(pkg ? [`Reinstall whatsapp-axi so that its optional dependency ${pkg} is installed`] : []),
-      "Or build from source: cd daemon && go build -o bin/whatsapp-axid ./cmd/whatsapp-axid (in a checkout of this repository)",
+      ...(pkg ? [`Run \`npm install -g whatsapp-axi\` to reinstall it with its optional dependency ${pkg}`] : []),
+      `Or build from source: in a checkout of ${SOURCE} at this version's tag, run \`bun run build:daemon\` and set WHATSAPP_AXI_DAEMON to the daemon/bin/whatsapp-axid it builds`,
     ],
   );
 }
+
+const SOURCE = "https://github.com/JarvusInnovations/whatsapp-axi";
 
 export interface RunResult {
   code: number;

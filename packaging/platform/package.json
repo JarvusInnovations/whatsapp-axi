@@ -1,0 +1,21 @@
+{
+  "name": "whatsapp-axi-${os}-${cpu}",
+  "version": "${version}",
+  "description": "The whatsapp-axid daemon of whatsapp-axi, prebuilt for ${os}-${cpu}. Installed by whatsapp-axi; not used on its own.",
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JarvusInnovations/whatsapp-axi.git"
+  },
+  "homepage": "https://github.com/JarvusInnovations/whatsapp-axi#readme",
+  "bugs": {
+    "url": "https://github.com/JarvusInnovations/whatsapp-axi/issues"
+  },
+  "os": ["${os}"],
+  "cpu": ["${cpu}"],
+  "files": ["bin/whatsapp-axid", "LICENSE", "NOTICES", "SOURCE.md", "README.md"],
+  "preferUnplugged": true,
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,94 @@
+name: Library latest
+
+# specs/distribution.md "Staying current": WhatsApp rejects old client versions, so build and test
+# the daemon against the latest whatsmeow every week, before WhatsApp forces the update. A failure
+# opens an issue (or comments on the one already open); nothing is committed.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    runs-on: ubuntu-latest
+    outputs:
+      library: ${{ steps.bump.outputs.library }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .tool-versions
+          cache: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .tool-versions
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+
+      - name: Move to the latest library
+        id: bump
+        working-directory: daemon
+        run: |
+          set -euo pipefail
+          before=$(go list -m -f '{{.Version}}' go.mau.fi/whatsmeow)
+          go get go.mau.fi/whatsmeow@latest
+          go mod tidy
+          after=$(go list -m -f '{{.Version}}' go.mau.fi/whatsmeow)
+          echo "library=$after" >> "$GITHUB_OUTPUT"
+          echo "go.mau.fi/whatsmeow $before -> $after"
+          git diff --stat -- go.mod go.sum
+
+      - name: Vet and test the daemon (CGO disabled)
+        working-directory: daemon
+        env:
+          CGO_ENABLED: "0"
+        run: go vet ./... && go test ./...
+
+      - name: Cross-compile the four targets
+        working-directory: daemon
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          for t in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
+            GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null ./cmd/whatsapp-axid
+          done
+
+      - name: Licence gate
+        run: node scripts/daemon-licenses.mjs
+
+      - name: CLI tests against the daemon built on the latest library
+        run: bun install --frozen-lockfile && bun run build && bun run build:daemon && bun run test
+
+  report:
+    needs: latest
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          LIBRARY: ${{ needs.latest.outputs.library }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="The daemon fails against the latest whatsmeow"
+          body="The scheduled build against the latest go.mau.fi/whatsmeow (${LIBRARY:-version not resolved}) failed: $RUN_URL
+
+          Updating the library is a routine release (specs/distribution.md, \"Staying current\"): move daemon/go.mod to the new version, fix what broke, and release."
+          number=$(gh issue list --state open --search "in:title \"$title\"" --json number,title --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

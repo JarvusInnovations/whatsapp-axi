@@ -195,7 +195,7 @@ describe("doctor link and state checks", () => {
   it("says what happened and what to do for each stopped state", async () => {
     const cases: Record<string, string> = {
       logged_out: "auth link --phone <number>",
-      outdated: "only a release built on a newer library",
+      outdated: "upgrade the package (`whatsapp-axi update`), then run `whatsapp-axi daemon upgrade`",
       suspended: "restart after the expiry",
     };
     for (const [state, fix] of Object.entries(cases)) {
