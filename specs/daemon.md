@@ -86,10 +86,37 @@ delete `store.db`.
 | --- | --- |
 | Presence | The daemon announces the account as available once after each connect, so that its name displays properly to others. Setting `presence: false` turns this off |
 | Delivery receipts | Sent automatically by the library for every message received, kept or not. With presence on they are ordinary delivery receipts |
-| Read receipts | With `read_receipts: on-keep` (the default), the daemon marks a message read when it keeps it. A discarded message is never marked read. `read_receipts: off` sends none |
-| Typing indicators | Never sent on the daemon's own initiative |
+| Read receipts | Sent when the consumer says it has read a message, never before (see "Receipts and typing" below). A discarded message is never marked read |
+| Typing indicators | Never sent on the daemon's own initiative; a consumer can ask for one |
 | History | Never downloaded ([scopes.md](scopes.md)) |
 | Identity changes of peers | Accepted automatically, as the library does by default |
+
+## Receipts and typing
+
+What other people see on their phones should match what the account's user has actually done. A
+person, or a bot, has not read a message just because a daemon stored it.
+
+| Signal | Sent when |
+| --- | --- |
+| Delivered (two grey ticks) | the daemon received the message. Automatic, for every message |
+| Read (blue ticks) | the consumer marks the message read |
+| Typing | the consumer says it is composing a reply |
+
+**Marking read.** With `read_receipts: on-read` (the default), a kept incoming message is marked
+read on WhatsApp only when a consumer marks it, in one of two ways:
+
+- by asking for it while reading: `events` and `messages` requests take a `mark_read` option, and
+  every incoming message returned by that request is marked
+- explicitly, for one message or for everything in a chat up to a message
+
+The daemon records that a message has been marked, so marking is idempotent and each message
+produces at most one read receipt. Reading without `mark_read` (a person debugging, a health
+check) marks nothing. The other values are `on-keep`, which marks a message the moment it is kept,
+and `off`, which never sends a read receipt and makes marking a no-op.
+
+**Typing.** A consumer can turn the typing indicator on for a chat while it works on a reply. The
+daemon turns it off when the account sends a message to that chat, when asked, or after two
+minutes, whichever comes first, so an indicator can never be left stuck on.
 
 ## Settings
 
@@ -105,7 +132,7 @@ delete `store.db`.
 | `wake_file` | unset | path to append wake lines to ([events.md](events.md)) |
 | `retain_days` | 90, or 0 for `full` | retention of kept content |
 | `presence` | `true` | announce availability on connect |
-| `read_receipts` | `on-keep` | `on-keep` or `off` |
+| `read_receipts` | `on-read` | `on-read`, `on-keep` or `off` |
 | `send` | see [sending.md](sending.md) | send limits |
 
 - The daemon validates the file on start and refuses to run with an unknown key or a bad value,
@@ -167,6 +194,9 @@ and records calls; no test connects to WhatsApp.
 - Each state transition, including that the stopped states neither retry nor exit.
 - Linking: the code is streamed, success ends in `connected`, a pairing with a different number is
   refused, the window timing out returns to `unlinked`.
-- A message is marked read exactly when it is kept and `read_receipts` is `on-keep`.
+- Under `on-read`, keeping a message sends no read receipt; a request with `mark_read`, and an
+  explicit mark, each send exactly one, and a second mark sends none. Under `on-keep` the receipt
+  is sent on keep. Under `off` none is ever sent.
+- Typing is cleared by a send to that chat, by a stop request, and by the two-minute limit.
 - Settings: unknown keys rejected; a change over the socket is durable and atomic.
 - `daemon install --dry-run` prints the unit and the binary path without changing anything.

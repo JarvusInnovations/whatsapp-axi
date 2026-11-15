@@ -64,8 +64,10 @@ upgrade command.
 | `PATCH /v1/settings` | changes settings; the body is a partial settings object, validated as a whole before anything is written |
 | `GET /v1/chats` | chats with kept content, with name, type, effective scope, last kept time and discard count |
 | `GET /v1/chats/{chat}` | one chat: the above plus its participants as user objects, each with `operator` and `contact` |
-| `GET /v1/events?after=&limit=&chat=&kind=&follow=` | events after a `seq`. With `follow=1`, **streams** |
-| `GET /v1/messages?chat=&before=&limit=` | kept messages of a chat, newest last |
+| `GET /v1/events?after=&limit=&chat=&kind=&follow=&mark_read=` | events after a `seq`. With `follow=1`, **streams**. With `mark_read=1`, marks the returned incoming messages read |
+| `GET /v1/messages?chat=&before=&limit=&mark_read=` | kept messages of a chat, newest last. `mark_read=1` as above |
+| `POST /v1/mark-read` | marks read; body `{chat, id}` for one message or `{chat, through}` for every kept incoming message up to and including that id |
+| `POST /v1/typing` | body `{chat, on}`; turns the typing indicator on or off for a chat |
 | `GET /v1/messages/{chat}/{id}` | one kept message |
 | `POST /v1/send` | sends text; body `{chat, text, reply_to?, mentions?, first_contact?}` |
 | `POST /v1/send-file` | sends a file; body `{chat, path, caption?, as?, reply_to?, first_contact?}` |
