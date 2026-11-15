@@ -308,6 +308,18 @@ func TestTyping(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	want(6, false)
 
+	// A stop that fails leaves the indicator on, so it can be retried.
+	core.TypingLimit = old
+	typing(true)
+	n := len(d.fake.Typing())
+	d.fake.SetTypingErr(fmt.Errorf("refused"))
+	d.wantError("POST", "/v1/typing", map[string]any{"chat": group, "on": false}, 502, "whatsapp_error")
+	d.fake.SetTypingErr(nil)
+	if r := typing(false); !r.Changed {
+		t.Fatal("the retried stop was a no-op")
+	}
+	want(n+1, false)
+
 	d.wantError("POST", "/v1/typing", map[string]any{"chat": group}, 400, "bad_request")
 	d.fake.Emit(client.StateChange{State: "connecting"})
 	d.wantError("POST", "/v1/typing", map[string]any{"chat": group, "on": true}, 409, "not_connected")

@@ -334,11 +334,12 @@ func (a *Account) Typing(ctx context.Context, b TypingBody) (*TypingResult, erro
 		if !wasOn {
 			return &TypingResult{Chat: chat}, nil
 		}
-		cur.timer.Stop()
-		delete(a.typing.timers, chat)
+		// The local timer goes only once the stop was sent, so a failed stop can be retried.
 		if err := a.client.SendTyping(ctx, chat, false); err != nil {
 			return nil, a.clientErr(err, "Clearing the typing indicator")
 		}
+		cur.timer.Stop()
+		delete(a.typing.timers, chat)
 		return &TypingResult{Chat: chat, Changed: true}, nil
 	}
 	if err := a.requireConnected("Showing typing"); err != nil {
