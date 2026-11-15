@@ -39,6 +39,7 @@ func TestParentKeptWholeFromBuffer(t *testing.T) {
 	if d.acct.BufferLen(group) != 1 {
 		t.Fatal("the discarded message is in the buffer")
 	}
+	early := d.emit(msg("first!", replyTo(parent.ID, alexLID, "the report is attached")))
 	before := d.events("?after=0")
 	reply := d.emit(msg("@Example can you check this?", mention, replyTo(parent.ID, alexLID, "the report is attached")))
 
@@ -53,7 +54,7 @@ func TestParentKeptWholeFromBuffer(t *testing.T) {
 	if !evs[1].Message.ReplyTo.Kept || evs[1].Message.KeptBy != "mention" {
 		t.Fatalf("reply_to.kept is true for a mentioning reply: %+v", evs[1].Message)
 	}
-	if d.acct.BufferLen(group) != 0 {
+	if d.acct.BufferLen(group) != 1 { // only the early sibling remains
 		t.Fatal("the pulled-in parent leaves the buffer")
 	}
 	// The parent is read once the reply brings it in.
@@ -61,7 +62,11 @@ func TestParentKeptWholeFromBuffer(t *testing.T) {
 		t.Fatalf("mark-read calls: %d", n)
 	}
 
-	// It does not start a thread: a sibling reply stays discarded...
+	// It does not start a thread: a sibling reply from before the mention is not recovered...
+	if d.kept(group, early.ID) {
+		t.Fatal("a sibling reply from before the mention is not recovered")
+	}
+	// ...a sibling reply after it stays discarded...
 	sib := d.emit(msg("me too", replyTo(parent.ID, alexLID, "the report is attached")))
 	if d.kept(group, sib.ID) {
 		t.Fatal("a sibling reply to a rule-2 parent is discarded")
