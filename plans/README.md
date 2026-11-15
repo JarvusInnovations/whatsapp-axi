@@ -10,4 +10,4 @@ The frontmatter is the only source of status and dependencies; this file keeps n
 - In flight: `grep -l '^status: in-progress' plans/*.md`
 - Done: `grep -l '^status: done' plans/*.md`
 
-No plans exist yet: they follow the first batch of specs.
+The first set of plans follows the bootstrap specs; `daemon-core` has no prerequisites.

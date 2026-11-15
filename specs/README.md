@@ -8,5 +8,7 @@ its architecture, behaviours, commands, errors and security rules. They are the 
 - **Plans bridge specs to code.** Each chunk of work is a file in [`plans/`](../plans/) that names
   the specs it implements and how it will be validated.
 
-No specs have been written yet. Research that feeds them lives in
-[`docs/research/`](../docs/research/); it is input, not a spec.
+Start with [`architecture.md`](architecture.md), which maps the rest.
+
+Research that fed the first specs is in [`docs/research/`](../docs/research/). It is input, not a
+spec: where the two disagree, the spec is what holds.

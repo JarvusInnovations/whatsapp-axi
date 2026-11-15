@@ -2,8 +2,8 @@
 
 Agent-ergonomic CLI and local daemon for WhatsApp accounts.
 
-**Status: early. The specs are being written; nothing here is usable yet.** The repository
-currently holds a build skeleton for both halves and research notes for the spec author.
+**Status: early. The specs are written and the build is starting; nothing here is usable yet.** The repository
+currently holds the specs, the plans, a build skeleton for both halves and the research notes behind the specs.
 
 ## What it will be
 
@@ -31,7 +31,7 @@ or abusive. Use a number you can afford to lose, and keep volumes human.
 | --- | --- |
 | `daemon/` | Go module for the daemon (`whatsapp-axid`) |
 | `bin/`, `src/`, `test/` | the TypeScript CLI (`whatsapp-axi`) |
-| `specs/` | what should be true (in progress) |
+| `specs/` | what should be true |
 | `plans/` | work in flight, per the plan protocol |
 | `docs/research/` | research notes that feed the specs; not specs themselves |
 
