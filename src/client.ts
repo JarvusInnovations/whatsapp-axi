@@ -2,7 +2,7 @@
 // Every failure becomes a structured error; nothing here ever turns a failed read into an empty one.
 import { request } from "node:http";
 import { failure } from "./errors.js";
-import { output } from "./output.js";
+import { appendLine, output } from "./output.js";
 import { accountPaths, roots } from "./paths.js";
 import { VERSION } from "./version.js";
 
@@ -146,6 +146,7 @@ export class Daemon {
     const help = helpForCode(this.account, e.code, e);
     const err = failure(e.message, e.code, help) as ReturnType<typeof failure> & { details?: Json };
     err.details = e;
+    output.daemonError = e;
     throw err;
   }
 
@@ -229,6 +230,7 @@ export class Daemon {
           } catch {
             throw badResponse(this.account, "a stream line is not JSON");
           }
+          appendLine(obj);
           yield obj as Json;
         }
       }
