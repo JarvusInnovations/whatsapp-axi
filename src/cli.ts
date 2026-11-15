@@ -21,6 +21,7 @@ import {
   daemonUpgradeSpec,
 } from "./commands/daemon.js";
 import { doctor, doctorSpec } from "./commands/doctor.js";
+import { hookDir, hookOutput, sessionStartSpec, setupHooks, setupHooksSpec, setupHooksStatus, setupHooksStatusSpec, setupHooksUninstall, setupHooksUninstallSpec } from "./commands/setup.js";
 import { chatView, chatViewSpec, chats, chatsSpec, events, eventsSpec, forget, forgetSpec, messageView, messageViewSpec, groups, groupsSpec, read, readSpec } from "./commands/read.js";
 import {
   operatorsAddSpec,
@@ -47,7 +48,7 @@ import { VERSION } from "./version.js";
 export const DESCRIPTION = "Agent-ergonomic CLI for WhatsApp accounts, each served by a local daemon";
 
 export const TOP_HELP = `usage: whatsapp-axi [command] [args] [flags]
-commands[20]:
+commands[21]:
   (none)=home: accounts with state and scope
   accounts, account add <name>, account remove <name> --confirm <name>
   auth link --phone <number> | --qr, auth logout --confirm
@@ -69,6 +70,7 @@ commands[20]:
   scope show, scope set <scope> [--chat <chat>] [--confirm], scope dm-from <who> [--confirm]
   operators list, operators add <user>, operators remove <user>
   settings show, settings set <key> <value> [--confirm]
+  setup hooks [status|uninstall] [--scope user|project] [--dir <path>]; session-start (what the hook runs)
 flags:
   --account <name> on every command that acts on an account (optional with exactly one account)
   --json-out[=path] on every command that calls the daemon, doctor and daemon status: also write the complete response as JSON to a file (bare: under the temp directory; streams one object per line); standard output stays TOON
@@ -80,6 +82,8 @@ type Handler = (ctx: Ctx, args: string[]) => Promise<unknown>;
 interface Sub {
   spec: CommandSpec;
   run: Handler;
+  /** The spec whose help to print, for a command with sub-forms (setup hooks status). */
+  helpSpec?: (rest: string[]) => CommandSpec;
 }
 
 
@@ -120,6 +124,8 @@ const SINGLE: Record<string, Sub> = {
   typing: { spec: typingSpec, run: typing },
   react: { spec: reactSpec, run: react },
   download: { spec: downloadSpec, run: download },
+  // Only its --help reaches the dispatcher; the hook itself is handled first in main.
+  "session-start": { spec: sessionStartSpec, run: async () => "" },
 };
 
 const GROUPS: Record<string, Record<string, Sub>> = {
@@ -145,10 +151,24 @@ const GROUPS: Record<string, Record<string, Sub>> = {
     remove: { spec: operatorsRemoveSpec, run: (c, a) => operatorsChange(c, a, false) },
   },
   settings: { show: { spec: settingsShowSpec, run: settingsShow }, set: { spec: settingsSetSpec, run: settingsSet } },
+  setup: {
+    hooks: {
+      spec: setupHooksSpec,
+      run: (c, a) => {
+        if (a[0] === "status") return setupHooksStatus(c, a.slice(1));
+        if (a[0] === "uninstall") return setupHooksUninstall(c, a.slice(1));
+        return setupHooks(c, a);
+      },
+      helpSpec: (a) => (a[0] === "status" ? setupHooksStatusSpec : a[0] === "uninstall" ? setupHooksUninstallSpec : setupHooksSpec),
+    },
+  },
 };
 
+/** Specs listed for help and tests that the dispatcher reaches through another entry. */
+const EXTRA_SPECS: CommandSpec[] = [setupHooksStatusSpec, setupHooksUninstallSpec];
+
 /** Every command spec, for help and tests. */
-export const SPECS: CommandSpec[] = [...Object.values(SINGLE).map((s) => s.spec), ...Object.values(GROUPS).flatMap((g) => Object.values(g).map((s) => s.spec))];
+export const SPECS: CommandSpec[] = [...Object.values(SINGLE).map((s) => s.spec), ...Object.values(GROUPS).flatMap((g) => Object.values(g).map((s) => s.spec)), ...EXTRA_SPECS];
 
 function groupHelp(name: string): string {
   const subs = GROUPS[name];
@@ -161,7 +181,7 @@ function subList(name: string): string[] {
 
 /** Commands that take --json-out: every command that calls the daemon, plus doctor and daemon status. */
 function takesJsonOut(name: string, subName?: string): boolean {
-  if (name === "accounts" || name === "account") return false;
+  if (name === "accounts" || name === "account" || name === "setup" || name === "session-start") return false;
   if (name === "daemon") return subName === "status";
   return true;
 }
@@ -189,7 +209,7 @@ function annotate(result: unknown, wrote: string, hint: string): unknown {
 
 /** Runs one subcommand, handling --json-out where the command takes it. */
 async function runSub(label: string, sub: Sub, rest: string[], ctxFactory: () => Ctx, eligible: boolean, local: boolean): Promise<unknown> {
-  if (rest.includes("--help")) return renderHelp(sub.spec) + (eligible ? JSON_OUT_HELP : "");
+  if (rest.includes("--help")) return renderHelp(sub.helpSpec?.(rest) ?? sub.spec) + (eligible ? JSON_OUT_HELP : "");
   if (!eligible) return sub.run(ctxFactory(), rest);
   const { args, path } = takeJsonOut(rest);
   if (path === undefined) return sub.run(ctxFactory(), args);
@@ -236,6 +256,23 @@ export async function main(argv?: string[], ctxFactory: () => Ctx = defaultCtx):
     };
   }
   const args = all;
+  // The session-start hook: prints its rows or nothing at all, and always exits 0. It bypasses
+  // the dispatcher so that nothing (not even a blank line or an error) is printed where the
+  // project names no accounts.
+  if (args[0] === "session-start" && !args.includes("--help")) {
+    let out = "";
+    try {
+      const rest = args.slice(1);
+      const di = rest.indexOf("--dir");
+      const dir = di >= 0 && rest[di + 1] ? rest[di + 1] : undefined;
+      out = await hookOutput(ctxFactory(), hookDir(dir));
+    } catch {
+      out = "";
+    }
+    if (out) process.stdout.write(out);
+    process.exitCode = 0;
+    return;
+  }
   const first = args[0];
   if (first?.startsWith("-") && !(args.length === 1 && ["--help", "-v", "-V", "--version"].includes(first))) {
     process.stdout.write(

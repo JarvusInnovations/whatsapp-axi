@@ -83,7 +83,8 @@ describe("choosing the account", () => {
 describe("usage errors", () => {
   it("every command rejects an unknown flag by name, listing its valid flags", async () => {
     addAccount(env, "example");
-    for (const spec of SPECS) {
+    // `session-start` is what the hook runs: it never fails and never prints an error (tested in setup.test.ts).
+    for (const spec of SPECS.filter((s) => s.name !== "session-start")) {
       const argv = [...spec.name.split(" "), ...spec.positionals.filter((p) => p.required).map(() => "x"), "--bogus"];
       const r = await run(argv);
       expect(r.code, spec.name).toBe(2);
