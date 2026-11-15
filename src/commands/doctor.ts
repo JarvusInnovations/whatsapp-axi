@@ -1,6 +1,5 @@
-// doctor: the checks that need neither a service nor a link (plans/cli-core.md). Files and modes,
-// the daemon on its socket, protocol and versions, the account's state, last phone activity, and
-// the wake file.
+// doctor: files and modes, the daemon on its socket, protocol and versions, the link and the
+// account's state with the fix for each stopped state, last phone activity, and the wake file.
 import { accessSync, constants, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { AxiError } from "axi-sdk-js";
@@ -30,6 +29,12 @@ const STOPPED: Record<string, string> = {
   logged_out: "WhatsApp ended the session (removed on the phone, the phone unused too long, or the account was banned); the account must be linked again",
   outdated: "WhatsApp rejected the client as too old; only a release built on a newer library fixes this",
   suspended: "WhatsApp applied a temporary ban; the daemon waits for its expiry",
+};
+
+const STOPPED_FIX: Record<string, (name: string) => string> = {
+  logged_out: (name) => `whatsapp-axi auth link --phone <number> --account ${name}`,
+  outdated: () => "npm install -g whatsapp-axi@latest, then whatsapp-axi daemon upgrade",
+  suspended: (name) => `wait for the expiry named in the reason, then restart the daemon (${startCommand(name)})`,
 };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -78,10 +83,19 @@ async function checkAccount(ctx: Ctx, name: string, now: number): Promise<{ acco
         },
   );
   const stopped = STOPPED[st.state];
+  const linkFix = `whatsapp-axi auth link --phone <number> --account ${name}`;
+  checks.push(
+    st.me
+      ? { check: "link", result: "ok", detail: `linked as ${st.me.pn ?? st.me.id}` }
+      : st.state === "linking"
+        ? { check: "link", result: "warn", detail: "a link attempt is running" }
+        : { check: "link", result: "fail", detail: "not linked to WhatsApp", ...(stopped ? {} : { fix: linkFix }) },
+  );
   checks.push({
     check: "state",
     result: stopped ? "fail" : st.state === "connected" ? "ok" : "warn",
     detail: `${st.state} since ${st.since}${st.reason ? ` (${st.reason})` : ""}${stopped ? `: ${stopped}` : ""}`,
+    ...(STOPPED_FIX[st.state] ? { fix: STOPPED_FIX[st.state](name) } : {}),
   });
   if (st.last_phone_activity) {
     const age = now - Date.parse(st.last_phone_activity);

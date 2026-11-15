@@ -2,6 +2,7 @@ import { encode } from "@toon-format/toon";
 import { runAxiCli } from "axi-sdk-js";
 import { renderHelp, type CommandSpec } from "./args.js";
 import { accountAdd, accountAddSpec, accountRemove, accountRemoveSpec, accounts, accountsSpec, daemonRun, daemonRunSpec, home } from "./commands/accounts.js";
+import { authLink, authLinkSpec, authLogout, authLogoutSpec } from "./commands/auth.js";
 import { doctor, doctorSpec } from "./commands/doctor.js";
 import { chatView, chatViewSpec, chats, chatsSpec, events, eventsSpec, forget, forgetSpec, messageView, messageViewSpec, read, readSpec } from "./commands/read.js";
 import {
@@ -28,9 +29,10 @@ import { VERSION } from "./version.js";
 export const DESCRIPTION = "Agent-ergonomic CLI for WhatsApp accounts, each served by a local daemon";
 
 export const TOP_HELP = `usage: whatsapp-axi [command] [args] [flags]
-commands[13]:
+commands[14]:
   (none)=home: accounts with state and scope
   accounts, account add <name>, account remove <name> --confirm <name>
+  auth link --phone <number> | --qr, auth logout --confirm
   daemon run <name>
   doctor [--account <name>]
   chats, chat view <chat>
@@ -57,18 +59,23 @@ function writeOut(s: string): void {
   process.stdout.write(s);
 }
 
-async function runEvents(ctx: Ctx, args: string[]): Promise<unknown> {
-  const ac = new AbortController();
-  const stop = () => ac.abort();
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
-  try {
-    return await events(ctx, args, writeOut, ac.signal);
-  } finally {
-    process.off("SIGINT", stop);
-    process.off("SIGTERM", stop);
-  }
+/** Runs a streaming command that Ctrl-C stops. */
+function streaming(fn: (ctx: Ctx, args: string[], write: (s: string) => void, signal: AbortSignal) => Promise<unknown>): Handler {
+  return async (ctx, args) => {
+    const ac = new AbortController();
+    const stop = () => ac.abort();
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    try {
+      return await fn(ctx, args, writeOut, ac.signal);
+    } finally {
+      process.off("SIGINT", stop);
+      process.off("SIGTERM", stop);
+    }
+  };
 }
+
+const runEvents = streaming(events);
 
 const SINGLE: Record<string, Sub> = {
   accounts: { spec: accountsSpec, run: accounts },
@@ -81,6 +88,7 @@ const SINGLE: Record<string, Sub> = {
 
 const GROUPS: Record<string, Record<string, Sub>> = {
   account: { add: { spec: accountAddSpec, run: accountAdd }, remove: { spec: accountRemoveSpec, run: accountRemove } },
+  auth: { link: { spec: authLinkSpec, run: streaming(authLink) }, logout: { spec: authLogoutSpec, run: authLogout } },
   daemon: { run: { spec: daemonRunSpec, run: daemonRun } },
   chat: { view: { spec: chatViewSpec, run: chatView } },
   message: { view: { spec: messageViewSpec, run: messageView } },

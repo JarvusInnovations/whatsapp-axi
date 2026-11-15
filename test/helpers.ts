@@ -61,6 +61,8 @@ export interface Reply {
   raw?: string;
   /** For streams: lines to send, then keep the connection open until the client goes. */
   lines?: unknown[];
+  /** For streams: end the response after the lines (a stream with a final line). */
+  end?: boolean;
 }
 
 export type Route = (req: { method: string; path: string; query: URLSearchParams; body: unknown }) => Reply;
@@ -154,6 +156,7 @@ export class FakeDaemon {
       if (reply.lines) {
         res.writeHead(200, { "Content-Type": "application/x-ndjson" });
         for (const l of reply.lines) res.write(JSON.stringify(l) + "\n");
+        if (reply.end) res.end();
         return;
       }
       res.writeHead(reply.status ?? 200, { "Content-Type": "application/json" });

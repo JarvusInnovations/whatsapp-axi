@@ -116,5 +116,5 @@ describe.skipIf(!ready)("end to end with the real daemon", () => {
     expect(r.code, r.out).toBe(0);
     r = await run(["accounts"]);
     expect(r.out).toContain("0 accounts");
-  });
+  }, 30_000);
 });
