@@ -102,3 +102,13 @@ limit in [sending.md](sending.md).
 - A direct chat first seen by phone-number id and later by hidden id: one chat, one history, one
   `chat_rekeyed` event, and the old id still resolves.
 - A message ref that is ambiguous across two chats returns the candidates and changes nothing.
+
+## Principles
+
+**Inherited** ([principles.md](principles.md)):
+
+- *A transport, not an agent*: the tool marks operators and contacts; deciding what to do with
+  them is the consumer's.
+- *Unknown is said as unknown*: an ambiguous ref is an error with its candidates, never a guess.
+
+**Local:** none.

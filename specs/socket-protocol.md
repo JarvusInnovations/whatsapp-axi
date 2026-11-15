@@ -63,15 +63,15 @@ upgrade command.
 | `GET /v1/settings` | the current settings |
 | `PATCH /v1/settings` | changes settings; the body is a partial settings object, validated as a whole before anything is written |
 | `GET /v1/chats` | chats with kept content, with name, type, effective scope, last kept time and discard count |
-| `GET /v1/groups` | every group the account is a member of, asked of WhatsApp at request time: id, name, effective scope, member count, discard count. `not_connected` when offline |
+| `GET /v1/groups` | every group the account is a member of, asked of WhatsApp at request time: id, name, effective scope, member count, discard count. `NOT_CONNECTED` when offline |
 | `GET /v1/chats/{chat}` | one chat: the above plus its participants as user objects, each with `operator` and `contact` |
-| `GET /v1/events?after=&limit=&chat=&kind=&follow=&mark_read=` | events after a `seq`. With `follow=1`, **streams**. With `mark_read=1`, marks the returned incoming messages read |
+| `GET /v1/events?after=&since=&limit=&chat=&kind=&follow=&mark_read=` | events after a `seq`; `since` (RFC 3339) keeps those kept at or after an instant, and `total` counts them. With `follow=1`, **streams**. With `mark_read=1`, marks the returned incoming messages read |
 | `GET /v1/messages?chat=&before=&limit=&mark_read=` | kept messages of a chat, newest last. `mark_read=1` as above |
 | `POST /v1/mark-read` | marks read; body `{chat, id}` for one message or `{chat, through}` for every kept incoming message up to and including that id |
 | `POST /v1/typing` | body `{chat, on}`; turns the typing indicator on or off for a chat |
 | `GET /v1/messages/{chat}/{id}` | one kept message |
-| `POST /v1/send` | sends text; body `{chat, text, reply_to?, mentions?, first_contact?}` |
-| `POST /v1/send-file` | sends a file; body `{chat, path, caption?, as?, reply_to?, first_contact?}` |
+| `POST /v1/send` | sends text; body `{chat, text, id?, reply_to?, mentions?, first_contact?}`. An `id` already sent to that chat answers the recorded result with `already_sent: true` and sends nothing ([sending.md](sending.md)) |
+| `POST /v1/send-file` | sends a file; body `{chat, path, id?, caption?, as?, reply_to?, first_contact?}`, with `id` as for a send |
 | `POST /v1/react` | reacts; body `{chat, id, emoji}`. An empty emoji removes the reaction |
 | `POST /v1/download` | fetches a kept message's media; body `{chat, id}`. Responds with the local path |
 | `POST /v1/forget` | deletes kept content; body `{chat}` or `{chat, id}` |
@@ -85,28 +85,35 @@ user as the CLI.
 A failed request has a 4xx or 5xx status and this body:
 
 ```json
-{ "error": { "code": "not_connected", "message": "The account is not connected to WhatsApp.", "state": "logged_out" } }
+{ "error": { "code": "NOT_CONNECTED", "message": "The account is not connected to WhatsApp.", "state": "logged_out" } }
 ```
+
+The codes are those of [conventions.md](conventions.md) ("From the daemon"), which holds the
+whole set:
 
 | `code` | Status | When |
 | --- | --- | --- |
-| `bad_request` | 400 | malformed body, unknown field, bad value. `message` names it |
-| `not_found` | 404 | no such chat or message in what the account has kept |
-| `ambiguous` | 409 | a message ref matches more than one chat; `candidates` lists them |
-| `not_linked` | 409 | the request needs a session and there is none |
-| `not_connected` | 409 | the request needs a live connection; `state` says what the daemon is in |
-| `link_in_progress` | 409 | a second link attempt while one is running |
-| `first_contact` | 409 | a send to a chat with no kept activity, without `first_contact` ([sending.md](sending.md)) |
-| `rate_limited` | 429 | a send limit was hit; `retry_after_seconds` says when |
-| `duplicate_text` | 429 | the same text to too many chats ([sending.md](sending.md)) |
-| `outcome_unknown` | 504 | a send whose result the daemon could not determine; the message may have gone out ([sending.md](sending.md)) |
-| `confirm_required` | 409 | a settings change that loosens a safeguard, sent without `confirm: true` ([cli.md](cli.md)) |
-| `not_downloadable` | 422 | the message has no media, is view-once, or its media has expired |
-| `whatsapp_error` | 502 | WhatsApp refused or failed the operation; `message` carries a cleaned-up reason |
-| `internal` | 500 | a bug. The body carries no file paths and no content |
+| `VALIDATION_ERROR` | 400 | malformed body, unknown field, bad value. `message` names it |
+| `NOT_FOUND` | 404 | no such chat or message in what the account has kept |
+| `AMBIGUOUS` | 409 | a message ref matches more than one chat; `candidates` lists them |
+| `NOT_LINKED` | 409 | the request needs a session and there is none |
+| `NOT_CONNECTED` | 409 | the request needs a live connection; `state` says what the daemon is in |
+| `LINK_IN_PROGRESS` | 409 | a second link attempt while one is running |
+| `FIRST_CONTACT` | 409 | a send to a chat with no kept activity, without `first_contact` ([sending.md](sending.md)) |
+| `CONFIRM_REQUIRED` | 409 | a settings change that loosens a safeguard, sent without `confirm: true` ([conventions.md](conventions.md), "The gate inventory") |
+| `RATE_LIMITED` | 429 | a send limit was hit; `retry_after_seconds` says when |
+| `DUPLICATE_TEXT` | 429 | the same text to too many chats ([sending.md](sending.md)) |
+| `NOT_DOWNLOADABLE` | 422 | the message has no media, is view-once, or its media has expired |
+| `UPSTREAM_ERROR` | 502 | WhatsApp refused or failed the operation; `message` carries a cleaned-up reason |
+| `OUTCOME_UNKNOWN` | 504 | a send whose result the daemon could not determine; the message may have gone out; `id` names it ([sending.md](sending.md)) |
+| `INTERNAL_ERROR` | 500 | a bug. The body carries no file paths and no content |
+
+Inside streams: a link attempt's final line carries `WRONG_NUMBER`, `CLIENT_OUTDATED`,
+`LINK_TIMEOUT` or `LINK_CANCELLED` (or `UPSTREAM_ERROR`); a follow stream's error line carries
+`MARK_FAILED` with the mark counts.
 
 - Codes are stable. A new failure gets a new code; an existing code does not change meaning.
-- An unknown field in a request body is `bad_request`. Nothing is silently ignored.
+- An unknown field in a request body is `VALIDATION_ERROR`. Nothing is silently ignored.
 - Error bodies never contain message content or key material.
 
 ## When the daemon is not running
@@ -128,3 +135,17 @@ included.
 - A follow stream and a link stream each deliver lines as they happen and end cleanly when the
   client disconnects.
 - No TCP listener exists: a test lists the process's listening sockets and finds only the Unix one.
+
+## Principles
+
+**Inherited** ([principles.md](principles.md)):
+
+- *One Unix user, one trust boundary*: the socket's modes and the peer check are the whole of
+  authentication.
+- *One vocabulary*: the codes and field names here are the CLI's, unchanged in `--json-out`.
+- *Unknown is said as unknown*: `OUTCOME_UNKNOWN`, never a plain failure, for a send that may
+  have gone out.
+- *Modest by default, loosened on purpose*: the daemon itself refuses a loosening change without
+  `confirm: true`.
+
+**Local:** none.

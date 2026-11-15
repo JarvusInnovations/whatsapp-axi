@@ -270,3 +270,15 @@ codes above; nothing an agent sees comes from the binary directly.
 - Toolchain: the house standard for the family (`bun` for install, scripts and tests, with the
   committed lockfile), while the published package stays an ordinary npm package for Node 22
   or later.
+
+## Principles
+
+**Inherited** ([principles.md](principles.md)):
+
+- *Follow the house style, and write down each departure*: this file is where the departures are
+  written down.
+- *One vocabulary*: one set of codes for the daemon and the CLI.
+- *Unknown is said as unknown*: reads fail closed.
+- *Modest by default, loosened on purpose*: the gate inventory.
+
+**Local:** none.

@@ -110,3 +110,14 @@ each `message`, `edit`, `revoke` and `reaction` event, after the event is commit
   written for the account's own messages or for `state` events.
 - No event of any kind contains media key material.
 - Retention removes content and ids past the cutoff and leaves `seq` monotonic.
+
+## Principles
+
+**Inherited** ([principles.md](principles.md)):
+
+- *The daemon decides what is kept*: events exist only for kept content.
+- *Say exactly what is promised*: the wake line carries no content.
+- *A transport, not an agent*: the wake file tells a consumer there is something to read, and
+  nothing more.
+
+**Local:** none.

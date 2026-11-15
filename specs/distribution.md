@@ -79,3 +79,12 @@ the CLI with npm, and the CLI finds the locally built binary. The pilot runs thi
 - Each platform package's manifest restricts `os` and `cpu` correctly and has no install scripts.
 - The licence check fails on a dependency whose licence is not allowed.
 - A cross-compile of all four targets succeeds in CI.
+
+## Principles
+
+**Inherited** ([principles.md](principles.md)):
+
+- *Follow the house style, and write down each departure*: an npm package with platform
+  binaries, released by the develop→main flow.
+
+**Local:** none.
