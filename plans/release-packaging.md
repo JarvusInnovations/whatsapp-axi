@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [pilot]
 specs:
   - specs/distribution.md
