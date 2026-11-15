@@ -13,7 +13,9 @@
     "docs:check": "node scripts/build-skill.mjs --check",
     "check:scrub": "bash scripts/scrub-check.sh",
     "format": "oxfmt src bin test scripts vitest.config.ts",
-    "format:check": "oxfmt --check src bin test scripts vitest.config.ts"
+    "format:check": "oxfmt --check src bin test scripts vitest.config.ts",
+    "build:packages": "node scripts/build-packages.mjs",
+    "check:licenses": "node scripts/daemon-licenses.mjs"
   },
   "repository": {
     "type": "git",
