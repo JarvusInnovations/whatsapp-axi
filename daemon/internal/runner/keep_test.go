@@ -28,6 +28,7 @@ func TestParentKeptWholeFromBuffer(t *testing.T) {
 	e := newEnv(t)
 	e.init()
 	d := e.start(startOpts{})
+	d.patch(`{"read_receipts":"on-keep"}`)
 	parent := d.emit(msg("the report is attached", func(m *client.Message) {
 		m.Sender, m.SenderAlt, m.PushName = alexLID, alexPN, "Alex"
 		m.Text = ""
@@ -462,6 +463,7 @@ func TestMarkReadOnKeep(t *testing.T) {
 	e := newEnv(t)
 	e.init()
 	d := e.start(startOpts{})
+	d.patch(`{"read_receipts":"on-keep"}`)
 	d.emit(msg("discarded"))
 	if d.fake.MarkReadCount() != 0 {
 		t.Fatal("a discarded message is never marked read")

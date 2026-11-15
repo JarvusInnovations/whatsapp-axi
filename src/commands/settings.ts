@@ -216,7 +216,7 @@ export const settingsSetSpec: CommandSpec = {
   summary: `Set one of: ${SETTABLE.join(", ")}`,
   positionals: [
     { name: "key", required: true, desc: SETTABLE.join(", ") },
-    { name: "value", required: true, desc: "wake_file: absolute path or none; retain_days: days or default; presence: true/false; read_receipts: on-keep/off" },
+    { name: "value", required: true, desc: "wake_file: absolute path or none; retain_days: days or default; presence: true/false; read_receipts: on-read/on-keep/off" },
   ],
   flags: { account: ACCOUNT },
   examples: ["whatsapp-axi settings set wake_file /home/me/.wake/whatsapp", "whatsapp-axi settings set retain_days 30", "whatsapp-axi settings set send.per_hour 20"],
@@ -238,7 +238,7 @@ function settingValue(key: string, raw: string): unknown {
       if (raw !== "true" && raw !== "false") throw usage("presence must be true or false");
       return raw === "true";
     case "read_receipts":
-      if (raw !== "on-keep" && raw !== "off") throw usage("read_receipts must be on-keep or off");
+      if (raw !== "on-read" && raw !== "on-keep" && raw !== "off") throw usage("read_receipts must be on-read, on-keep or off");
       return raw;
     case "send.first_contact":
       if (raw !== "refuse" && raw !== "allow") throw usage("send.first_contact must be refuse or allow");

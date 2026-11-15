@@ -180,7 +180,7 @@ export const SETTINGS = {
   wake_file: null as string | null,
   retain_days: null as number | null,
   presence: true,
-  read_receipts: "on-keep",
+  read_receipts: "on-read",
   send: { first_contact: "refuse", per_hour: 60, per_minute: 10, same_text_chats: 3, max_file_mb: 64 },
 };
 

@@ -12,7 +12,7 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Scope != "tagged" || s.DMFrom != "operators" || !s.ParentBuffer || !s.Presence || s.ReadReceipts != "on-keep" ||
+	if s.Scope != "tagged" || s.DMFrom != "operators" || !s.ParentBuffer || !s.Presence || s.ReadReceipts != "on-read" ||
 		s.Send.FirstContact != "refuse" || s.Send.PerHour != 60 || s.Send.PerMinute != 10 || s.Send.SameTextChats != 3 || s.Send.MaxFileMB != 64 {
 		t.Fatalf("defaults: %+v", s)
 	}
@@ -50,6 +50,16 @@ func TestRejects(t *testing.T) {
 		_, err := Parse([]byte(in))
 		if err == nil || !strings.Contains(err.Error(), key) {
 			t.Errorf("%s: got %v, want an error naming %s", in, err, key)
+		}
+	}
+}
+
+func TestReadReceiptsValues(t *testing.T) {
+	// on-read is the default; a file written before it existed, saying on-keep, stays valid.
+	for _, v := range []string{"on-read", "on-keep", "off"} {
+		s, err := Parse([]byte(`{"read_receipts":"` + v + `"}`))
+		if err != nil || s.ReadReceipts != v {
+			t.Errorf("%s: %v %q", v, err, s.ReadReceipts)
 		}
 	}
 }
