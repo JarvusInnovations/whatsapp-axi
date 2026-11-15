@@ -30,10 +30,10 @@ and the skill.
 
 ## Validation
 
-- [ ] Each command in scope has tests for success output, every error code it can meet, and exit codes
-- [ ] Unknown flags, missing values and a missing `--account` with several accounts exit 2 with the valid choices
-- [ ] With no daemon running, every daemon-backed command names the start command
-- [ ] End to end on one machine with the real daemon from `daemon-core`: `account add`, `daemon run`, `scope set`, `operators add`, `events`, all without WhatsApp
+- [x] Each command in scope has tests for success output, every error code it can meet, and exit codes
+- [x] Unknown flags, missing values and a missing `--account` with several accounts exit 2 with the valid choices
+- [x] With no daemon running, every daemon-backed command names the start command
+- [x] End to end on one machine with the real daemon from `daemon-core`: `account add`, `daemon run`, `scope set`, `operators add`, `events`, all without WhatsApp
 - [ ] Lint, type-check, build and tests pass in CI
 
 ## Risks
