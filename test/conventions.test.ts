@@ -211,6 +211,34 @@ describe("finding the daemon binary", () => {
     expect(() => findDaemon({ env: {}, root: undefined, resolvePackage: () => undefined })).toThrow(/platform package whatsapp-axi-/);
   });
 
+  it("names the missing platform package and how to build from source; a checkout is told to build", () => {
+    const missing = (lookup: Parameters<typeof findDaemon>[0]) => {
+      try {
+        findDaemon(lookup);
+      } catch (err) {
+        return err as { message: string; code: string; suggestions: string[] };
+      }
+      throw new Error("expected DAEMON_BINARY_MISSING");
+    };
+    const installed = missing({ env: {}, root: join(env.home, "installed"), resolvePackage: () => undefined, platform: "darwin", arch: "arm64" });
+    expect(installed.code).toBe("DAEMON_BINARY_MISSING");
+    expect(installed.message).toContain("the platform package whatsapp-axi-darwin-arm64 is not installed");
+    expect(installed.suggestions[0]).toBe("Run `npm install -g whatsapp-axi` to reinstall it with its optional dependency whatsapp-axi-darwin-arm64");
+    expect(installed.suggestions[1]).toContain("`bun run build:daemon`");
+    expect(installed.suggestions[1]).toContain("https://github.com/JarvusInnovations/whatsapp-axi");
+
+    const other = missing({ env: {}, root: undefined, resolvePackage: () => undefined, platform: "win32", arch: "x64" });
+    expect(other.message).toContain("no platform package exists for win32-x64");
+    expect(other.suggestions.join(" ")).not.toContain("npm install");
+
+    const checkout = join(env.home, "unbuilt");
+    mkdirSync(join(checkout, "daemon"), { recursive: true });
+    writeFileSync(join(checkout, "daemon", "go.mod"), "module example\n");
+    const unbuilt = missing({ env: {}, root: checkout, resolvePackage: () => undefined, platform: "linux", arch: "x64" });
+    expect(unbuilt.message).toContain("this source checkout has not built one");
+    expect(unbuilt.suggestions).toEqual(["Run `bun run build:daemon` in the checkout to build daemon/bin/whatsapp-axid"]);
+  });
+
   it("maps platforms to package names", () => {
     expect(platformPackage("linux", "x64")).toBe("whatsapp-axi-linux-x64");
     expect(platformPackage("darwin", "arm64")).toBe("whatsapp-axi-darwin-arm64");
@@ -366,6 +394,14 @@ describe("output vocabulary", () => {
       r = await run(["update"]);
       expect(r.code).toBe(1);
       expect(r.out).toContain("code: UPSTREAM_ERROR");
+      // A failed upgrade comes after the registry named a version, so its npm hint is kept.
+      const { AxiError } = await import("axi-sdk-js");
+      setUpdater(async () => {
+        throw new AxiError("Failed to upgrade whatsapp-axi", "UPDATE_ERROR", ["Run `npm install -g whatsapp-axi@latest` manually"]);
+      });
+      r = await run(["update"]);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("npm install -g whatsapp-axi@latest");
     } finally {
       const { runUpdate } = await import("axi-sdk-js");
       setUpdater(runUpdate as never);
