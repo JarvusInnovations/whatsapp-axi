@@ -37,6 +37,9 @@ func (c *Client) GroupInfo(context.Context, string) (client.GroupInfo, error) {
 	return client.GroupInfo{}, client.ErrNotConnected
 }
 func (c *Client) SendPresence(context.Context) error { return client.ErrNotConnected }
+func (c *Client) JoinedGroups(context.Context) ([]client.JoinedGroup, error) {
+	return nil, client.ErrNotConnected
+}
 func (c *Client) SendTyping(context.Context, string, bool) error {
 	return client.ErrNotConnected
 }

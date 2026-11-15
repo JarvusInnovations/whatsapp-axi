@@ -37,6 +37,7 @@ func New(acct *core.Account, log *slog.Logger) *Server {
 	s.mux.HandleFunc("PATCH /v1/settings", s.patchSettings)
 	s.mux.HandleFunc("GET /v1/chats", s.chats)
 	s.mux.HandleFunc("GET /v1/chats/{chat}", s.chat)
+	s.mux.HandleFunc("GET /v1/groups", s.groups)
 	s.mux.HandleFunc("GET /v1/events", s.events)
 	s.mux.HandleFunc("GET /v1/messages", s.messages)
 	s.mux.HandleFunc("GET /v1/messages/{id}", s.message)
@@ -265,6 +266,19 @@ func (s *Server) chats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"chats": list})
+}
+
+func (s *Server) groups(w http.ResponseWriter, r *http.Request) {
+	if _, err := query(r); err != nil {
+		s.fail(w, err)
+		return
+	}
+	list, err := s.acct.Groups(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"groups": list})
 }
 
 func (s *Server) chat(w http.ResponseWriter, r *http.Request) {

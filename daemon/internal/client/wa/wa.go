@@ -367,10 +367,35 @@ func (c *Client) GroupInfo(ctx context.Context, chat string) (client.GroupInfo, 
 		return client.GroupInfo{}, err
 	}
 	g, err := wa.GetGroupInfo(ctx, j)
-	if err != nil {
+	if errors.Is(err, whatsmeow.ErrNotInGroup) || errors.Is(err, whatsmeow.ErrGroupNotFound) {
+		return client.GroupInfo{}, client.ErrNoGroup
+	} else if err != nil {
 		return client.GroupInfo{}, err
 	}
 	return groupInfo(g), nil
+}
+
+func (c *Client) JoinedGroups(ctx context.Context) ([]client.JoinedGroup, error) {
+	wa, err := c.connected()
+	if err != nil {
+		return nil, err
+	}
+	gs, err := wa.GetJoinedGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return joinedGroups(gs), nil
+}
+
+func joinedGroups(gs []*types.GroupInfo) []client.JoinedGroup {
+	out := make([]client.JoinedGroup, 0, len(gs))
+	for _, g := range gs {
+		if g == nil {
+			continue
+		}
+		out = append(out, client.JoinedGroup{ID: g.JID.ToNonAD().String(), Name: g.Name, Members: len(g.Participants)})
+	}
+	return out
 }
 
 func groupInfo(g *types.GroupInfo) client.GroupInfo {

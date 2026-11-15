@@ -354,6 +354,9 @@ func TestRequiredLibrarySettings(t *testing.T) {
 	if _, err := a.GroupInfo(context.Background(), group.String()); err != client.ErrNotConnected {
 		t.Fatal(err)
 	}
+	if _, err := a.JoinedGroups(context.Background()); err != client.ErrNotConnected {
+		t.Fatal(err)
+	}
 	if err := a.MarkRead(context.Background(), group.String(), samLID.String(), []string{"x"}, time.Now()); err != client.ErrNotConnected {
 		t.Fatal(err)
 	}
@@ -372,6 +375,10 @@ func TestGroupInfoAndContactNames(t *testing.T) {
 	}})
 	if g.Name != "Example group" || g.Participants[0].LID != samLID.String() || g.Participants[0].PN != samPN.String() || g.Participants[1].PN != "15550100003@s.whatsapp.net" {
 		t.Fatalf("%+v", g)
+	}
+	j := joinedGroups([]*types.GroupInfo{nil, {JID: group, GroupName: types.GroupName{Name: "Example group"}, Participants: []types.GroupParticipant{{JID: samLID}, {JID: alexLID}}}})
+	if len(j) != 1 || j[0] != (client.JoinedGroup{ID: group.String(), Name: "Example group", Members: 2}) {
+		t.Fatalf("%+v", j)
 	}
 	if n, ok := addressBookName(types.ContactInfo{Found: true, PushName: "Self"}); ok || n != "" {
 		t.Fatal("a push name alone is not a contact")

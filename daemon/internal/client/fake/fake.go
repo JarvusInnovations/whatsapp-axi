@@ -5,6 +5,7 @@ package fake
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -34,11 +35,12 @@ type Client struct {
 	contacts map[string]string // id -> address-book name
 	groups   map[string]client.GroupInfo
 
-	MarkReads []MarkReadCall
-	typing    []TypingCall
-	Requested []string // ids passed to RequestMapping
-	Closed    bool
-	Presences int // SendPresence calls
+	MarkReads   []MarkReadCall
+	typing      []TypingCall
+	Requested   []string // ids passed to RequestMapping
+	Closed      bool
+	Presences   int // SendPresence calls
+	JoinedCalls int // JoinedGroups calls
 	// NoPushName makes SendPresence fail with ErrNoPushName, as before app-state sync.
 	NoPushName bool
 	LoggedOut  bool
@@ -208,9 +210,25 @@ func (c *Client) GroupInfo(_ context.Context, chat string) (client.GroupInfo, er
 	}
 	g, ok := c.groups[chat]
 	if !ok {
-		return client.GroupInfo{}, client.ErrNotConnected
+		return client.GroupInfo{}, client.ErrNoGroup
 	}
 	return g, nil
+}
+
+// JoinedGroups lists every group set with SetGroup, ordered by id.
+func (c *Client) JoinedGroups(context.Context) ([]client.JoinedGroup, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state != "connected" {
+		return nil, client.ErrNotConnected
+	}
+	c.JoinedCalls++
+	out := []client.JoinedGroup{}
+	for id, g := range c.groups {
+		out = append(out, client.JoinedGroup{ID: id, Name: g.Name, Members: len(g.Participants)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 
 func (c *Client) MarkRead(_ context.Context, chat, sender string, ids []string, _ time.Time) error {

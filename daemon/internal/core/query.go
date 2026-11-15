@@ -195,14 +195,62 @@ func (a *Account) Chats(ctx context.Context) ([]ChatSummary, error) {
 	return out, nil
 }
 
-// Chat is GET /v1/chats/{chat}.
+// GroupSummary is one row of GET /v1/groups.
+type GroupSummary struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Scope     string `json:"scope"`
+	Override  string `json:"override,omitempty"`
+	Members   int    `json:"members"`
+	Discarded int64  `json:"discarded"`
+}
+
+// Groups is GET /v1/groups: every group the account is a member of, kept content or not, asked
+// of WhatsApp now (scopes.md "Membership is not content"). Member lists are not stored.
+func (a *Account) Groups(ctx context.Context) ([]GroupSummary, error) {
+	gs, err := a.client.JoinedGroups(ctx)
+	if err != nil {
+		return nil, a.clientErr(err, "Listing groups")
+	}
+	s := a.Settings()
+	out := make([]GroupSummary, 0, len(gs))
+	for _, g := range gs {
+		row := GroupSummary{ID: g.ID, Name: g.Name, Members: g.Members, Override: s.Chats[g.ID]}
+		row.Scope = scope.EffectiveScope(s.Scope, row.Override)
+		if err := a.db.QueryRowContext(ctx, `SELECT coalesce((SELECT n FROM discard_counters WHERE chat_key=?),0)`, g.ID).Scan(&row.Discarded); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+// Chat is GET /v1/chats/{chat}. A group the account is in but has kept nothing from is answered
+// from WhatsApp, like a kept one: membership is not content.
 func (a *Account) Chat(ctx context.Context, ref string) (*ChatDetail, error) {
 	id, err := a.ResolveChat(ctx, ref)
-	if err != nil {
-		return nil, err
-	}
-	c, err := a.summary(ctx, a.db, id)
-	if err != nil {
+	var c ChatSummary
+	switch {
+	case err == nil:
+		if c, err = a.summary(ctx, a.db, id); err != nil {
+			return nil, err
+		}
+	case identity.IsGroup(ref) && isNotFound(err):
+		id = ref
+		c = ChatSummary{ID: id, Type: "group"}
+		if err := a.db.QueryRowContext(ctx, `SELECT coalesce((SELECT n FROM discard_counters WHERE chat_key=?),0)`, id).Scan(&c.Discarded); err != nil {
+			return nil, err
+		}
+		s := a.Settings()
+		c.Override = s.Chats[id]
+		c.Scope = scope.EffectiveScope(s.Scope, c.Override)
+	default:
 		return nil, err
 	}
 	d := &ChatDetail{ChatSummary: c, Participants: []User{}}
@@ -229,10 +277,13 @@ func (a *Account) Chat(ctx context.Context, ref string) (*ChatDetail, error) {
 		g, err := a.client.GroupInfo(ctx, id)
 		if err != nil {
 			st, _, _ := a.State()
-			if errors.Is(err, client.ErrNotConnected) {
+			switch {
+			case errors.Is(err, client.ErrNotConnected):
 				return nil, &APIError{Status: http.StatusConflict, Code: "not_connected", Message: "The participant list of a group needs a live connection to WhatsApp.", State: st}
+			case errors.Is(err, client.ErrNoGroup):
+				return nil, notFound("The account is not a member of %s, and nothing from it is kept.", id)
 			}
-			return nil, err
+			return nil, a.clientErr(err, "Reading the group")
 		}
 		if g.Name != "" {
 			d.Name = g.Name
@@ -258,6 +309,11 @@ func (a *Account) Chat(ctx context.Context, ref string) (*ChatDetail, error) {
 	}
 	add(a.user(ctx, id, alt, c.Name, own, ops, false))
 	return d, nil
+}
+
+func isNotFound(err error) bool {
+	var ae *APIError
+	return errors.As(err, &ae) && ae.Code == "not_found"
 }
 
 func firstNonEmpty(v ...string) string {
