@@ -39,8 +39,9 @@ linking, sending, service units, packaging.
 2. Settings: load, validate strictly, write atomically.
 3. `store.db`: schema and migrations for chats, messages, reactions, events, counters, aliases;
    secure deletion on.
-4. The scope filter as a pure function, then the keep path (write, event, wake line) and the
-   discard path (counter only).
+4. The scope filter as a pure function, then the keep path (write, event, wake line), the
+   discard path (counter, and the in-memory recent-message buffer), and keeping the parent of a
+   mentioning reply.
 5. Identity: the user object, "is this me", operators, chat keys, rekey.
 6. The socket server: directory and file modes, lock, peer check, HTTP over the socket, the
    requests above, streaming follow.
