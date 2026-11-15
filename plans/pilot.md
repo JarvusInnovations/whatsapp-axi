@@ -1,5 +1,5 @@
 ---
-status: planned
+status: in-progress
 depends: [sending, service-linux]
 specs:
   - specs/scopes.md
@@ -49,5 +49,13 @@ questions only live traffic can answer. Produces `docs/pilot.md` and corrections
 Open questions for live traffic: what a quoted copy contains; how a mention appears in a hidden-id
 group; whether a group-wide mention has a recognizable field; how often messages carry a
 per-message secret; what the phone does when history is not downloaded.
+
+**2026-11-15, first live run (fix round, PR 16).** The account linked by pairing code. Found:
+the state stuck at `connecting` right after the link although the connection was up (the
+pairing socket's late Disconnected); presence failed for want of the push name after the link
+and after a restart and was never retried; a start with a session recorded a false
+`unlinked (no session)` first; a plain `go build` reported `0.0.0-dev`, so `doctor` warned of a
+version mismatch; a group with nothing kept could not be seen at all. PR 16 fixes these and
+implements read receipts on read, typing, and the `groups` listing (specs PR 14 and 15).
 
 ## Follow-ups
