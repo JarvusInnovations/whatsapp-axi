@@ -10,6 +10,11 @@
   with an error, or returns something the CLI cannot parse, the command fails with exit 1. It
   never prints an empty list, a zero or a success in that case. A mutation reports success only
   after the daemon confirmed it.
+- **`--json`** on every command prints one JSON document instead of TOON, for scripts: on
+  success the daemon's response body unchanged (for a streaming command, one JSON object per
+  line), and on failure `{"error": {"code", "message", …}}` with the same exit code. Commands
+  that do not call the daemon print the same data they would print as TOON. Field names in
+  `--json` output are part of the interface and change only with the protocol version.
 - **Errors** are structured, on standard output, with a `help` line naming the command that fixes
   the problem. Daemon error codes ([socket-protocol.md](socket-protocol.md)) are passed through as
   `code`.
