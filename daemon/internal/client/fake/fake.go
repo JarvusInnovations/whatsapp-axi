@@ -30,6 +30,27 @@ type Client struct {
 	MarkReads []MarkReadCall
 	Requested []string // ids passed to RequestMapping
 	Closed    bool
+	Presences int // SendPresence calls
+	LoggedOut bool
+
+	// Linking is what the next Link call does.
+	Linking LinkPlan
+	// LinkRequests records every Link request.
+	LinkRequests []client.LinkRequest
+}
+
+// LinkPlan scripts a Link call of the fake.
+type LinkPlan struct {
+	Codes []string // pairing codes reported, in order (pairing-code links)
+	QRs   []string // QR payloads reported, in order (QR links)
+	// PairAs is the phone-number id of the phone that completes the link. Empty means the
+	// window closes first (ErrLinkTimeout).
+	PairAs  string
+	PairLID string
+	// Wait, when set, is waited on (or the context) before the link completes.
+	Wait <-chan struct{}
+	// Err, when set, is returned instead.
+	Err error
 }
 
 // New returns a fake in the given state with the given own ids.
@@ -158,6 +179,75 @@ func (c *Client) MarkRead(_ context.Context, chat, sender string, ids []string, 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.MarkReads = append(c.MarkReads, MarkReadCall{Chat: chat, Sender: sender, IDs: append([]string(nil), ids...)})
+	return nil
+}
+
+func (c *Client) SendPresence(context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state != "connected" {
+		return client.ErrNotConnected
+	}
+	c.Presences++
+	return nil
+}
+
+// PresenceCount returns how many SendPresence calls succeeded.
+func (c *Client) PresenceCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.Presences
+}
+
+// Link plays the LinkPlan. It refuses a pairing by a different number with the same check the
+// adapter uses (client.PhoneMatches).
+func (c *Client) Link(ctx context.Context, req client.LinkRequest, progress func(client.LinkProgress)) error {
+	c.mu.Lock()
+	plan := c.Linking
+	c.LinkRequests = append(c.LinkRequests, req)
+	c.mu.Unlock()
+	if req.QR {
+		for _, q := range plan.QRs {
+			progress(client.LinkProgress{QR: q})
+		}
+	} else {
+		for _, code := range plan.Codes {
+			progress(client.LinkProgress{Code: code})
+		}
+	}
+	if plan.Wait != nil {
+		select {
+		case <-plan.Wait:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if plan.Err != nil {
+		return plan.Err
+	}
+	if plan.PairAs == "" {
+		return client.ErrLinkTimeout
+	}
+	if !client.PhoneMatches(req.Phone, plan.PairAs) {
+		return client.ErrWrongNumber
+	}
+	c.mu.Lock()
+	c.own = client.Own{PN: plan.PairAs, LID: plan.PairLID}
+	c.mu.Unlock()
+	c.Emit(client.StateChange{State: "connected"})
+	return nil
+}
+
+func (c *Client) Logout(context.Context) error {
+	c.mu.Lock()
+	if c.state != "connected" {
+		c.mu.Unlock()
+		return client.ErrNotConnected
+	}
+	c.own = client.Own{}
+	c.LoggedOut = true
+	c.state, c.reason = "unlinked", "logged out by the operator"
+	c.mu.Unlock()
 	return nil
 }
 

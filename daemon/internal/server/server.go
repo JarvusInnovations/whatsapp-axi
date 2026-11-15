@@ -42,6 +42,8 @@ func New(acct *core.Account, log *slog.Logger) *Server {
 	s.mux.HandleFunc("GET /v1/messages/{id}", s.message)
 	s.mux.HandleFunc("GET /v1/messages/{chat}/{id}", s.message)
 	s.mux.HandleFunc("POST /v1/forget", s.forget)
+	s.mux.HandleFunc("POST /v1/link", s.link)
+	s.mux.HandleFunc("POST /v1/logout", s.logout)
 	return s
 }
 
@@ -444,4 +446,55 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case <-sub:
 		}
 	}
+}
+
+func (s *Server) link(w http.ResponseWriter, r *http.Request) {
+	if _, err := query(r); err != nil {
+		s.fail(w, err)
+		return
+	}
+	var b core.LinkBody
+	if err := decode(r, &b); err != nil {
+		s.fail(w, err)
+		return
+	}
+	req, err := s.acct.BeginLink(b)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	flusher, _ := w.(http.Flusher)
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.WriteHeader(http.StatusOK)
+	if flusher != nil {
+		flusher.Flush()
+	}
+	write := func(l core.LinkLine) {
+		b, _ := json.Marshal(l)
+		if _, err := w.Write(append(b, '\n')); err == nil && flusher != nil {
+			flusher.Flush()
+		}
+	}
+	res := s.acct.RunLink(r.Context(), req, write)
+	write(core.LinkLine{Result: &res})
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if _, err := query(r); err != nil {
+		s.fail(w, err)
+		return
+	}
+	var b struct{}
+	if r.ContentLength != 0 {
+		if err := decode(r, &b); err != nil {
+			s.fail(w, err)
+			return
+		}
+	}
+	res, err := s.acct.Logout(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }

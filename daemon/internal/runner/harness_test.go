@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"go.mau.fi/whatsmeow/store/sqlstore"
+
 	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/client"
 	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/client/fake"
 	"github.com/JarvusInnovations/whatsapp-axi/daemon/internal/core"
@@ -170,7 +172,7 @@ func (e *env) start(o startOpts) *daemon {
 			Version:   "0.0.0-test",
 			Log:       e.log,
 			Level:     slog.LevelDebug,
-			NewClient: func(bool) client.Client { return fc },
+			NewClient: func(*sqlstore.Container, bool, *slog.Logger) client.Client { return fc },
 			PeerUID:   o.peer,
 			Now:       o.clock.Now,
 			Ready:     func(a *core.Account) { ready <- a },

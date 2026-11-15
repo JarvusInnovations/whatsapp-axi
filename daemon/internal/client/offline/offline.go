@@ -1,5 +1,5 @@
-// Package offline is the client the daemon runs on until the whatsmeow adapter exists
-// (plans/whatsapp-client.md). It never connects: with no session the daemon is unlinked, and
+// Package offline is the client the daemon runs on when no WhatsApp client is configured (tests
+// of the runner). It never connects: with no session the daemon is unlinked, and
 // every call that would need WhatsApp reports that it is not connected.
 package offline
 
@@ -35,6 +35,11 @@ func (c *Client) RequestMapping(context.Context, string)         {}
 func (c *Client) Contact(context.Context, string) (string, bool) { return "", false }
 func (c *Client) GroupInfo(context.Context, string) (client.GroupInfo, error) {
 	return client.GroupInfo{}, client.ErrNotConnected
+}
+func (c *Client) SendPresence(context.Context) error { return client.ErrNotConnected }
+func (c *Client) Logout(context.Context) error       { return client.ErrNotConnected }
+func (c *Client) Link(context.Context, client.LinkRequest, func(client.LinkProgress)) error {
+	return client.ErrNotConnected
 }
 func (c *Client) MarkRead(context.Context, string, string, []string, time.Time) error {
 	return client.ErrNotConnected
