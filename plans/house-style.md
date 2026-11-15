@@ -1,5 +1,6 @@
 ---
-status: in-progress
+status: done
+pr: 27
 depends: [pilot]
 specs:
   - specs/conventions.md
