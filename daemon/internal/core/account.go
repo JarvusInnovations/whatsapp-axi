@@ -57,6 +57,10 @@ type Account struct {
 
 	linkMu  sync.Mutex
 	linking bool
+
+	// sendMu makes sends and reactions reach the client strictly one after another.
+	sendMu sync.Mutex
+	limits *limiter
 }
 
 // New builds an Account and records the client's initial state.
@@ -74,6 +78,7 @@ func New(ctx context.Context, o Options) (*Account, error) {
 		settings: o.Settings,
 		buffer:   newRecentBuffer(),
 		notify:   newNotifier(),
+		limits:   newLimiter(),
 	}
 	st, reason := o.Client.State()
 	if err := a.enterState(ctx, st, reason, true); err != nil {

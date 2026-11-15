@@ -44,6 +44,10 @@ func New(acct *core.Account, log *slog.Logger) *Server {
 	s.mux.HandleFunc("POST /v1/forget", s.forget)
 	s.mux.HandleFunc("POST /v1/link", s.link)
 	s.mux.HandleFunc("POST /v1/logout", s.logout)
+	s.mux.HandleFunc("POST /v1/send", s.send)
+	s.mux.HandleFunc("POST /v1/send-file", s.sendFile)
+	s.mux.HandleFunc("POST /v1/react", s.react)
+	s.mux.HandleFunc("POST /v1/download", s.download)
 	return s
 }
 
@@ -123,6 +127,9 @@ func writeError(w http.ResponseWriter, err error) {
 	var ae *core.APIError
 	if !errors.As(err, &ae) {
 		ae = core.Internal
+	}
+	if ae.RetryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(ae.RetryAfter))
 	}
 	writeJSON(w, ae.Status, map[string]any{"error": ae})
 }
@@ -497,4 +504,39 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// post runs a JSON POST request: no query parameters, a strict body, one result.
+func post[B any, R any](s *Server, w http.ResponseWriter, r *http.Request, fn func(context.Context, B) (R, error)) {
+	if _, err := query(r); err != nil {
+		s.fail(w, err)
+		return
+	}
+	var b B
+	if err := decode(r, &b); err != nil {
+		s.fail(w, err)
+		return
+	}
+	res, err := fn(r.Context(), b)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) send(w http.ResponseWriter, r *http.Request) {
+	post(s, w, r, s.acct.Send)
+}
+
+func (s *Server) sendFile(w http.ResponseWriter, r *http.Request) {
+	post(s, w, r, s.acct.SendFile)
+}
+
+func (s *Server) react(w http.ResponseWriter, r *http.Request) {
+	post(s, w, r, s.acct.React)
+}
+
+func (s *Server) download(w http.ResponseWriter, r *http.Request) {
+	post(s, w, r, s.acct.Download)
 }
