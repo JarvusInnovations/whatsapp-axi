@@ -473,6 +473,7 @@ describe("scope, operators and settings", () => {
     expect(r.code).toBe(2);
     r = await run(["scope", "set", "full", "--confirm"]);
     expect(r.out).toContain("scope: full (set)");
+    expect(fake.seen.at(-1)?.body).toEqual({ scope: "full", confirm: true });
     r = await run(["scope", "set", "full", "--confirm"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("already set, no-op");
@@ -491,10 +492,32 @@ describe("scope, operators and settings", () => {
     expect(r.code).toBe(2);
   });
 
-  it("sets dm-from", async () => {
-    const r = await run(["scope", "dm-from", "anyone"]);
+  it("sets dm-from; anyone needs --confirm, operators does not", async () => {
+    let r = await run(["scope", "dm-from", "anyone"]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("scope dm-from anyone --confirm");
+    r = await run(["scope", "dm-from", "anyone", "--confirm"]);
     expect(r.out).toContain("dm_from: anyone (set)");
+    expect(fake.seen.at(-1)?.body).toEqual({ dm_from: "anyone", confirm: true });
+    r = await run(["scope", "dm-from", "operators"]);
+    expect(r.code).toBe(0);
+    expect(fake.seen.at(-1)?.body).toEqual({ dm_from: "operators" });
     expect((await run(["scope", "dm-from", "everyone"])).code).toBe(2);
+  });
+
+  it("loosening a send safeguard needs --confirm; the daemon's refusal names the command", async () => {
+    let r = await run(["settings", "set", "send.first_contact", "allow"]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("--confirm");
+    r = await run(["settings", "set", "send.first_contact", "allow", "--confirm"]);
+    expect(r.code, r.out).toBe(0);
+    expect(fake.seen.at(-1)?.body).toEqual({ send: { first_contact: "allow" }, confirm: true });
+    fake.route("PATCH /v1/settings", () => apiError(409, "confirm_required", "This change widens what the account reads or loosens a send safeguard (raising send.per_hour from 60 to 120); send it with confirm: true."));
+    r = await run(["settings", "set", "send.per_hour", "120"]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("code: confirm_required");
+    expect(r.out).toContain("whatsapp-axi settings set send.per_hour 120 --confirm");
+    expect(r.out).not.toContain("(set)");
   });
 
   it("adds and removes operators idempotently", async () => {

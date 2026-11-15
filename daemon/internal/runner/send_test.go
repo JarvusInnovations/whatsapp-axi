@@ -445,7 +445,7 @@ func TestSendLimitsAtTheSocket(t *testing.T) {
 			t.Fatal("the old id must still resolve to the rekeyed chat")
 		}
 		// send.first_contact allow.
-		d.patch(`{"send":{"first_contact":"allow"}}`)
+		d.patch(`{"send":{"first_contact":"allow"},"confirm":true}`)
 		d.send(map[string]any{"chat": "+15550100008", "text": "hi"})
 	})
 
@@ -480,7 +480,7 @@ func TestSendLimitsAtTheSocket(t *testing.T) {
 		e := newEnv(t)
 		e.init()
 		d := e.start(startOpts{})
-		d.patch(`{"send":{"same_text_chats":2,"first_contact":"allow"}}`)
+		d.patch(`{"send":{"same_text_chats":2,"first_contact":"allow"},"confirm":true}`)
 		d.send(map[string]any{"chat": "+15550100001", "text": "Buy now"})
 		d.send(map[string]any{"chat": "+15550100002", "text": "  Buy now\n"}) // compared after trimming
 		d.send(map[string]any{"chat": "+15550100001", "text": "Buy now"})     // the same chat again is fine

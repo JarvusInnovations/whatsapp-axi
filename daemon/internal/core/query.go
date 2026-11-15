@@ -846,6 +846,15 @@ func (a *Account) PatchSettings(ctx context.Context, body []byte) (*SettingsResu
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, badRequest("the body must be a JSON object: %v", err)
 	}
+	// confirm is not a setting: it says the caller means a change that loosens a safeguard.
+	confirm := false
+	if c, ok := raw["confirm"]; ok {
+		if err := json.Unmarshal(c, &confirm); err != nil {
+			return nil, badRequest("settings: confirm: must be true or false")
+		}
+		delete(raw, "confirm")
+		body, _ = json.Marshal(raw)
+	}
 	if chats, ok := raw["chats"]; ok && string(chats) != "null" {
 		var m map[string]json.RawMessage
 		if err := json.Unmarshal(chats, &m); err != nil {
@@ -870,6 +879,9 @@ func (a *Account) PatchSettings(ctx context.Context, body []byte) (*SettingsResu
 	if err != nil {
 		return nil, badRequest("%s", err.Error())
 	}
+	if loosened := Loosens(a.settings, next); len(loosened) > 0 && !confirm {
+		return nil, conflict("confirm_required", "", "This change widens what the account reads or loosens a send safeguard (%s); send it with confirm: true.", strings.Join(loosened, ", "))
+	}
 	changed := !settings.Equal(next, a.settings)
 	if changed {
 		if err := a.writeSettings(next); err != nil {
@@ -877,6 +889,45 @@ func (a *Account) PatchSettings(ctx context.Context, body []byte) (*SettingsResu
 		}
 	}
 	return SettingsView(next, &changed), nil
+}
+
+// Loosens lists what a change from prev to next widens or loosens, each needing confirm
+// (specs/cli.md "What needs --confirm"): scope full (the account's or a chat's), dm_from anyone,
+// send.first_contact allow, and raising a send limit above its current value. Tightening, and
+// setting a value already in place, needs nothing.
+func Loosens(prev, next settings.Settings) []string {
+	var out []string
+	if next.Scope == settings.ScopeFull && prev.Scope != settings.ScopeFull {
+		out = append(out, "scope full")
+	}
+	var chats []string
+	for id, v := range next.Chats {
+		if v == settings.ScopeFull && prev.Chats[id] != settings.ScopeFull {
+			chats = append(chats, "chats."+id+" full")
+		}
+	}
+	sort.Strings(chats)
+	out = append(out, chats...)
+	if next.DMFrom == "anyone" && prev.DMFrom != "anyone" {
+		out = append(out, "dm_from anyone")
+	}
+	if next.Send.FirstContact == "allow" && prev.Send.FirstContact != "allow" {
+		out = append(out, "send.first_contact allow")
+	}
+	for _, l := range []struct {
+		key        string
+		prev, next int
+	}{
+		{"send.per_hour", prev.Send.PerHour, next.Send.PerHour},
+		{"send.per_minute", prev.Send.PerMinute, next.Send.PerMinute},
+		{"send.same_text_chats", prev.Send.SameTextChats, next.Send.SameTextChats},
+		{"send.max_file_mb", prev.Send.MaxFileMB, next.Send.MaxFileMB},
+	} {
+		if l.next > l.prev {
+			out = append(out, fmt.Sprintf("raising %s from %d to %d", l.key, l.prev, l.next))
+		}
+	}
+	return out
 }
 
 // writeSettings writes and applies settings. The caller holds a.mu.

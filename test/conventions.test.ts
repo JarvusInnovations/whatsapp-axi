@@ -31,7 +31,7 @@ const DAEMON_BACKED: string[][] = [
   ["typing", GROUP, "--stop"],
   ["scope", "show"],
   ["scope", "set", "tagged"],
-  ["scope", "dm-from", "anyone"],
+  ["scope", "dm-from", "anyone", "--confirm"],
   ["operators", "list"],
   ["operators", "add", "+15550100001"],
   ["operators", "remove", "+15550100001"],

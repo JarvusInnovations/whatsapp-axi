@@ -66,9 +66,9 @@ commands[20]:
   react <ref> <emoji> | react <ref> --remove
   download <ref>
   forget <chat> [--message <ref>] --confirm
-  scope show, scope set <scope> [--chat <chat>] [--confirm], scope dm-from <who>
+  scope show, scope set <scope> [--chat <chat>] [--confirm], scope dm-from <who> [--confirm]
   operators list, operators add <user>, operators remove <user>
-  settings show, settings set <key> <value>
+  settings show, settings set <key> <value> [--confirm]
 flags:
   --account <name> on every command that acts on an account (optional with exactly one account)
   --json-out[=path] on every command that calls the daemon, doctor and daemon status: also write the complete response as JSON to a file (bare: under the temp directory; streams one object per line); standard output stays TOON

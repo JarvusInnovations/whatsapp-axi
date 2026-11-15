@@ -296,7 +296,7 @@ func TestStatusAndSettingsRequests(t *testing.T) {
 	if sv.Settings.Scope != "tagged" || sv.Eff != 90 {
 		t.Fatalf("settings: %+v", sv)
 	}
-	code, body := d.do("PATCH", "/v1/settings", `{"operators":["+15550100001"],"chats":{"+15550100003":"full"}}`)
+	code, body := d.do("PATCH", "/v1/settings", `{"operators":["+15550100001"],"chats":{"+15550100003":"full"},"confirm":true}`)
 	json.Unmarshal(body, &sv)
 	if code != 200 || sv.Changed == nil || !*sv.Changed || len(sv.Settings.Operators) != 1 || sv.Settings.Chats[caseyPN] != "full" {
 		t.Fatalf("patch: %d %s", code, body)
