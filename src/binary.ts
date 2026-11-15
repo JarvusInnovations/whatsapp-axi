@@ -42,12 +42,13 @@ function defaultResolve(name: string): string | undefined {
   }
 }
 
-export function findDaemon(o: Lookup = {}): string {
+export function findDaemon(envOrLookup: Record<string, string | undefined> | Lookup = {}): string {
+  const o: Lookup = "env" in envOrLookup || "root" in envOrLookup || "resolvePackage" in envOrLookup ? (envOrLookup as Lookup) : { env: envOrLookup as Record<string, string | undefined> };
   const env = o.env ?? process.env;
   const fromEnv = env.WHATSAPP_AXI_DAEMON;
   if (fromEnv) {
     if (existsSync(fromEnv)) return fromEnv;
-    throw failure(`WHATSAPP_AXI_DAEMON points at ${fromEnv}, which does not exist.`, "daemon_binary_missing", ["Unset it, or point it at a built whatsapp-axid"]);
+    throw failure(`WHATSAPP_AXI_DAEMON points at ${fromEnv}, which does not exist.`, "DAEMON_BINARY_MISSING", ["Unset WHATSAPP_AXI_DAEMON, or point it at a built whatsapp-axid"]);
   }
   const root = "root" in o ? o.root : packageRoot();
   if (root) {
@@ -61,7 +62,7 @@ export function findDaemon(o: Lookup = {}): string {
   }
   throw failure(
     pkg ? `No whatsapp-axid daemon binary found: the platform package ${pkg} is not installed.` : `No whatsapp-axid daemon binary found, and no platform package exists for ${process.platform}-${process.arch}.`,
-    "daemon_binary_missing",
+    "DAEMON_BINARY_MISSING",
     [
       ...(pkg ? [`Reinstall whatsapp-axi so that its optional dependency ${pkg} is installed`] : []),
       "Or build from source: cd daemon && go build -o bin/whatsapp-axid ./cmd/whatsapp-axid (in a checkout of this repository)",
@@ -76,14 +77,14 @@ export interface RunResult {
 }
 
 /** Runs a one-shot daemon subcommand and captures its output. */
-export function runDaemon(bin: string, args: string[]): Promise<RunResult> {
+export function runDaemon(bin: string, args: string[], env: Record<string, string | undefined> = process.env): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env: env as NodeJS.ProcessEnv });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (c: Buffer) => (stdout += c.toString()));
     child.stderr.on("data", (c: Buffer) => (stderr += c.toString()));
-    child.on("error", (e) => reject(failure(`Cannot run the daemon binary ${bin}: ${e.message}`, "daemon_binary_failed")));
+    child.on("error", (e) => reject(failure(`Cannot run the daemon binary ${bin}: ${e.message}`, "DAEMON_BINARY_FAILED", ["Run `whatsapp-axi doctor` to check the binary"])));
     child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
   });
 }

@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main } from "../src/cli.js";
-import { defaultCtx, setServiceFactory } from "../src/context.js";
+import { makeCtx, setServiceFactory, type Ctx } from "../src/context.js";
 import type { CommandResult, ServiceManager, UnitState } from "../src/service.js";
 
 /**
@@ -119,7 +119,7 @@ export interface Env {
   cleanup(): Promise<void>;
 }
 
-const VARS = ["HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "WHATSAPP_AXI_DAEMON"];
+const VARS = ["HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "WHATSAPP_AXI_DAEMON", "WHATSAPP_AXI_ACCOUNT", "WHATSAPP_AXI_CONFIG_DIR", "WHATSAPP_AXI_TIMEOUT_MS", "WHATSAPP_AXI_DISABLE_HOOKS"];
 
 export function makeEnv(): Env {
   const saved = Object.fromEntries(VARS.map((v) => [v, process.env[v]]));
@@ -133,6 +133,11 @@ export function makeEnv(): Env {
   process.env.XDG_DATA_HOME = join(home, "data");
   process.env.XDG_RUNTIME_DIR = runtime;
   delete process.env.WHATSAPP_AXI_DAEMON;
+  delete process.env.WHATSAPP_AXI_ACCOUNT;
+  delete process.env.WHATSAPP_AXI_CONFIG_DIR;
+  delete process.env.WHATSAPP_AXI_TIMEOUT_MS;
+  // Tests never write a hook unless one sets this off for a hook test.
+  process.env.WHATSAPP_AXI_DISABLE_HOOKS = "1";
   service = new FakeService(join(home, "config", "systemd", "user"));
   setServiceFactory(() => service);
   return {
@@ -150,14 +155,27 @@ export function makeEnv(): Env {
   };
 }
 
-/** Creates an account's files the way `whatsapp-axid init` does. */
+/** Creates an account's files the way `whatsapp-axid init` does: under accounts/. */
 export function addAccount(env: Env, name: string): void {
+  const root = join(env.home, "config", "whatsapp-axi");
+  const sroot = join(env.home, "state", "whatsapp-axi");
+  const cfg = join(root, "accounts");
+  const st = join(sroot, "accounts");
+  mkdirSync(join(cfg, name), { recursive: true, mode: 0o700 });
+  mkdirSync(join(st, name, "media"), { recursive: true, mode: 0o700 });
+  for (const d of [root, sroot, cfg, st, join(cfg, name), join(st, name)]) chmodSync(d, 0o700);
+  writeFileSync(join(cfg, name, "settings.json"), "{}\n", { mode: 0o600 });
+}
+
+/** Lays an account out in the old place, directly under the roots. */
+export function addLegacyAccount(env: Env, name: string): void {
   const cfg = join(env.home, "config", "whatsapp-axi");
   const st = join(env.home, "state", "whatsapp-axi");
   mkdirSync(join(cfg, name), { recursive: true, mode: 0o700 });
   mkdirSync(join(st, name, "media"), { recursive: true, mode: 0o700 });
   for (const d of [cfg, st, join(cfg, name), join(st, name)]) chmodSync(d, 0o700);
   writeFileSync(join(cfg, name, "settings.json"), "{}\n", { mode: 0o600 });
+  writeFileSync(join(st, name, "store.db"), "", { mode: 0o600 });
 }
 
 export function socketPath(env: Env, name: string): string {
@@ -176,6 +194,11 @@ export interface Reply {
   hang?: boolean;
   /** Drop the connection without answering. */
   drop?: boolean;
+  /**
+   * Send the body exactly as given. Otherwise a list body without `total` gets one equal to its
+   * length, as the real daemon always sends it.
+   */
+  exact?: boolean;
 }
 
 export type Route = (req: { method: string; path: string; query: URLSearchParams; body: unknown }) => Reply;
@@ -265,7 +288,7 @@ export class FakeDaemon {
           if (m === req.method && p.endsWith("*") && url.pathname.startsWith(p.slice(0, -1))) fn = f;
         }
       }
-      const reply = fn ? fn({ method: req.method ?? "", path: url.pathname, query: url.searchParams, body }) : apiError(400, "bad_request", "Unknown request.");
+      const reply = fn ? fn({ method: req.method ?? "", path: url.pathname, query: url.searchParams, body }) : apiError(400, "VALIDATION_ERROR", "Unknown request.");
       if (reply.hang) return;
       if (reply.drop) {
         req.socket.destroy();
@@ -277,8 +300,13 @@ export class FakeDaemon {
         if (reply.end) res.end();
         return;
       }
+      let b = reply.body ?? {};
+      if (!reply.exact && b && typeof b === "object" && !Array.isArray(b) && !("total" in b)) {
+        const list = ["chats", "groups", "events", "messages"].find((k) => Array.isArray((b as Record<string, unknown>)[k]));
+        if (list) b = { ...(b as Record<string, unknown>), total: ((b as Record<string, unknown>)[list] as unknown[]).length };
+      }
       res.writeHead(reply.status ?? 200, { "Content-Type": "application/json" });
-      res.end(reply.raw ?? JSON.stringify(reply.body ?? {}));
+      res.end(reply.raw ?? JSON.stringify(b));
     });
   }
 
@@ -298,21 +326,37 @@ export interface Result {
   code: number;
 }
 
-/** Runs the CLI in-process and captures stdout and the exit code. */
-export async function run(argv: string[]): Promise<Result> {
+export interface RunOpts {
+  stdin?: string;
+  now?: number;
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+}
+
+/** Runs the CLI in-process through main(argv, io) and captures stdout and the exit code. */
+export async function run(argv: string[], opts: RunOpts = {}): Promise<Result> {
   const chunks: string[] = [];
-  const write = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((chunk: string | Uint8Array) => {
-    chunks.push(String(chunk));
-    return true;
-  }) as typeof process.stdout.write;
+  const io = {
+    env: { ...process.env, ...opts.env },
+    cwd: opts.cwd ?? process.cwd(),
+    now: () => opts.now ?? Date.now(),
+    stdout: { write: (c: string) => chunks.push(String(c)) },
+    stdin: () => opts.stdin ?? "",
+  };
+  for (const [k, v] of Object.entries(io.env)) if (v === undefined) delete io.env[k];
   process.exitCode = undefined;
-  try {
-    await main(argv, defaultCtx);
-  } finally {
-    process.stdout.write = write;
-  }
-  const code = typeof process.exitCode === "number" ? process.exitCode : 0;
+  const code = await main(argv, io);
   process.exitCode = undefined;
   return { out: chunks.join(""), code };
+}
+
+/** A command context over the test environment, for calling a command function directly. */
+export function testCtx(opts: RunOpts = {}): Ctx {
+  return makeCtx({
+    env: { ...process.env, ...opts.env },
+    cwd: opts.cwd ?? process.cwd(),
+    now: () => opts.now ?? Date.now(),
+    stdout: { write: () => true },
+    stdin: () => opts.stdin ?? "",
+  });
 }

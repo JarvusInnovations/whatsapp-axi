@@ -61,7 +61,7 @@ func TestListsStateTheirSize(t *testing.T) {
 	if len(evs.Events) != 1 || evs.Total != 1 {
 		t.Fatalf("events in a chat %d of %d", len(evs.Events), evs.Total)
 	}
-	d.wantError("GET", "/v1/chats?limit=0", nil, 400, "bad_request")
-	d.wantError("GET", "/v1/groups?limit=x", nil, 400, "bad_request")
-	d.wantError("GET", "/v1/chats?nope=1", nil, 400, "bad_request")
+	d.wantError("GET", "/v1/chats?limit=0", nil, 400, "VALIDATION_ERROR")
+	d.wantError("GET", "/v1/groups?limit=x", nil, 400, "VALIDATION_ERROR")
+	d.wantError("GET", "/v1/chats?nope=1", nil, 400, "VALIDATION_ERROR")
 }

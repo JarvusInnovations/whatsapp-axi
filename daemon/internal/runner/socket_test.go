@@ -282,10 +282,10 @@ func TestStatusAndSettingsRequests(t *testing.T) {
 	if st.State != "connected" || st.Me == nil || st.Me.ID != ownLID || st.Me.PN != "+15550100000" || !st.LastPhoneActivityApprox {
 		t.Fatalf("status: %+v", st)
 	}
-	d.wantError("GET", "/v1/status?x=1", nil, 400, "bad_request")
-	d.wantError("GET", "/v1/nothing", nil, 400, "bad_request")
-	d.wantError("DELETE", "/v1/status", nil, 400, "bad_request")
-	d.wantError("POST", "/v1/send", `{}`, 400, "bad_request")
+	d.wantError("GET", "/v1/status?x=1", nil, 400, "VALIDATION_ERROR")
+	d.wantError("GET", "/v1/nothing", nil, 400, "VALIDATION_ERROR")
+	d.wantError("DELETE", "/v1/status", nil, 400, "VALIDATION_ERROR")
+	d.wantError("POST", "/v1/send", `{}`, 400, "VALIDATION_ERROR")
 
 	var sv struct {
 		Settings settings.Settings `json:"settings"`
@@ -308,11 +308,11 @@ func TestStatusAndSettingsRequests(t *testing.T) {
 		t.Fatal("a repeated patch reports a change")
 	}
 	before, _ := os.ReadFile(e.layout().SettingsFile())
-	d.wantError("PATCH", "/v1/settings", `{"operators":["+15550100002"],"bogus":1}`, 400, "bad_request")
-	d.wantError("PATCH", "/v1/settings", `{"scope":"full","presence":"maybe"}`, 400, "bad_request")
-	d.wantError("PATCH", "/v1/settings", `{"chats":{"not-a-chat":"full"}}`, 400, "bad_request")
-	d.wantError("PATCH", "/v1/settings", `{"chats":{"+15550100003":"tagged"}}`, 400, "bad_request")
-	d.wantError("PATCH", "/v1/settings", `not json`, 400, "bad_request")
+	d.wantError("PATCH", "/v1/settings", `{"operators":["+15550100002"],"bogus":1}`, 400, "VALIDATION_ERROR")
+	d.wantError("PATCH", "/v1/settings", `{"scope":"full","presence":"maybe"}`, 400, "VALIDATION_ERROR")
+	d.wantError("PATCH", "/v1/settings", `{"chats":{"not-a-chat":"full"}}`, 400, "VALIDATION_ERROR")
+	d.wantError("PATCH", "/v1/settings", `{"chats":{"+15550100003":"tagged"}}`, 400, "VALIDATION_ERROR")
+	d.wantError("PATCH", "/v1/settings", `not json`, 400, "VALIDATION_ERROR")
 	after, _ := os.ReadFile(e.layout().SettingsFile())
 	if string(before) != string(after) {
 		t.Fatal("a rejected patch changed the file")
@@ -340,7 +340,7 @@ func TestChatRequests(t *testing.T) {
 		{JID: ownLID, LID: ownLID, PN: ownPN}, {JID: samLID, LID: samLID, PN: samPN}, {JID: alexLID, LID: alexLID},
 	}})
 	d.fake.AddContact(samLID, "Sam Example")
-	d.patch(`{"operators":["+15550100001"]}`)
+	d.patch(`{"operators":["+15550100001"],"confirm":true}`)
 	d.emit(msg("@Example hi", mention))
 
 	var list struct {
@@ -361,11 +361,11 @@ func TestChatRequests(t *testing.T) {
 	if marks[ownLID] != [3]bool{true, false, false} || marks[samLID] != [3]bool{false, true, true} || marks[alexLID] != [3]bool{false, false, false} {
 		t.Fatalf("participants: %+v", cv.Chat.Participants)
 	}
-	d.wantError("GET", "/v1/chats/"+url.PathEscape(group2), nil, 404, "not_found") // not a member, nothing kept
-	d.wantError("GET", "/v1/chats/bogus", nil, 400, "bad_request")
-	d.wantError("GET", "/v1/chats?x=1", nil, 400, "bad_request")
+	d.wantError("GET", "/v1/chats/"+url.PathEscape(group2), nil, 404, "NOT_FOUND") // not a member, nothing kept
+	d.wantError("GET", "/v1/chats/bogus", nil, 400, "VALIDATION_ERROR")
+	d.wantError("GET", "/v1/chats?x=1", nil, 400, "VALIDATION_ERROR")
 	d.fake.Emit(client.StateChange{State: "connecting", Reason: "connection lost"})
-	e2 := d.wantError("GET", "/v1/chats/"+url.PathEscape(group), nil, 409, "not_connected")
+	e2 := d.wantError("GET", "/v1/chats/"+url.PathEscape(group), nil, 409, "NOT_CONNECTED")
 	if e2["state"] != "connecting" {
 		t.Fatalf("not_connected carries the state: %v", e2)
 	}
@@ -388,11 +388,11 @@ func TestMessageRequests(t *testing.T) {
 	if len(page.Messages) != 1 || page.Messages[0].ID != second.ID || !page.More {
 		t.Fatalf("before/limit: %+v", page)
 	}
-	d.wantError("GET", "/v1/messages?chat="+group+"&before=NOPE", nil, 404, "not_found")
-	d.wantError("GET", "/v1/messages?chat="+group2, nil, 404, "not_found")
-	d.wantError("GET", "/v1/messages", nil, 400, "bad_request")
-	d.wantError("GET", "/v1/messages?chat="+group+"&limit=0", nil, 400, "bad_request")
-	d.wantError("GET", "/v1/messages?chat="+group+"&sort=asc", nil, 400, "bad_request")
+	d.wantError("GET", "/v1/messages?chat="+group+"&before=NOPE", nil, 404, "NOT_FOUND")
+	d.wantError("GET", "/v1/messages?chat="+group2, nil, 404, "NOT_FOUND")
+	d.wantError("GET", "/v1/messages", nil, 400, "VALIDATION_ERROR")
+	d.wantError("GET", "/v1/messages?chat="+group+"&limit=0", nil, 400, "VALIDATION_ERROR")
+	d.wantError("GET", "/v1/messages?chat="+group+"&sort=asc", nil, 400, "VALIDATION_ERROR")
 
 	var one core.MessageResult
 	d.get("/v1/messages/"+url.PathEscape(group)+"/"+second.ID, &one)
@@ -400,12 +400,12 @@ func TestMessageRequests(t *testing.T) {
 		t.Fatalf("one: %+v", one)
 	}
 	d.get("/v1/messages/"+second.ID, &one) // a bare id
-	d.wantError("GET", "/v1/messages/"+url.PathEscape(group)+"/NOPE", nil, 404, "not_found")
-	d.wantError("GET", "/v1/messages/NOPE", nil, 404, "not_found")
+	d.wantError("GET", "/v1/messages/"+url.PathEscape(group)+"/NOPE", nil, 404, "NOT_FOUND")
+	d.wantError("GET", "/v1/messages/NOPE", nil, 404, "NOT_FOUND")
 
 	// forget: one message, then the chat.
-	d.wantError("POST", "/v1/forget", `{"chat":"`+group+`","id":"`+second.ID+`","extra":1}`, 400, "bad_request")
-	d.wantError("POST", "/v1/forget", `{}`, 400, "bad_request")
+	d.wantError("POST", "/v1/forget", `{"chat":"`+group+`","id":"`+second.ID+`","extra":1}`, 400, "VALIDATION_ERROR")
+	d.wantError("POST", "/v1/forget", `{}`, 400, "VALIDATION_ERROR")
 	var fr struct {
 		Forgotten core.ForgetResult `json:"forgotten"`
 	}
@@ -422,13 +422,13 @@ func TestMessageRequests(t *testing.T) {
 			t.Fatal("forgotten message's event still readable")
 		}
 	}
-	d.wantError("POST", "/v1/forget", map[string]string{"chat": group, "id": second.ID}, 404, "not_found")
+	d.wantError("POST", "/v1/forget", map[string]string{"chat": group, "id": second.ID}, 404, "NOT_FOUND")
 	code, body = d.do("POST", "/v1/forget", map[string]string{"chat": group})
 	if code != 200 {
 		t.Fatalf("forget chat: %d %s", code, body)
 	}
-	d.wantError("GET", "/v1/messages?chat="+group, nil, 404, "not_found")
-	d.wantError("POST", "/v1/forget", map[string]string{"chat": group}, 404, "not_found")
+	d.wantError("GET", "/v1/messages?chat="+group, nil, 404, "NOT_FOUND")
+	d.wantError("POST", "/v1/forget", map[string]string{"chat": group}, 404, "NOT_FOUND")
 }
 
 func TestEventRequests(t *testing.T) {
@@ -464,12 +464,12 @@ func TestEventRequests(t *testing.T) {
 	if got := d.events("?after=0&kind=state"); len(got) != 1 {
 		t.Fatalf("kind filter: %+v", got)
 	}
-	d.wantError("GET", "/v1/events?kind=bogus", nil, 400, "bad_request")
-	d.wantError("GET", "/v1/events?after=-1", nil, 400, "bad_request")
-	d.wantError("GET", "/v1/events?limit=5000", nil, 400, "bad_request")
-	d.wantError("GET", "/v1/events?chat="+url.QueryEscape("120363000000000009@g.us"), nil, 404, "not_found")
-	d.wantError("GET", "/v1/events?cursor=1", nil, 400, "bad_request")
-	d.wantError("GET", "/v1/events?follow=yes", nil, 400, "bad_request")
+	d.wantError("GET", "/v1/events?kind=bogus", nil, 400, "VALIDATION_ERROR")
+	d.wantError("GET", "/v1/events?after=-1", nil, 400, "VALIDATION_ERROR")
+	d.wantError("GET", "/v1/events?limit=5000", nil, 400, "VALIDATION_ERROR")
+	d.wantError("GET", "/v1/events?chat="+url.QueryEscape("120363000000000009@g.us"), nil, 404, "NOT_FOUND")
+	d.wantError("GET", "/v1/events?cursor=1", nil, 400, "VALIDATION_ERROR")
+	d.wantError("GET", "/v1/events?follow=yes", nil, 400, "VALIDATION_ERROR")
 }
 
 func TestFollowStream(t *testing.T) {
@@ -581,7 +581,7 @@ func TestGroupsAndMembership(t *testing.T) {
 		{JID: ownLID, LID: ownLID, PN: ownPN}, {JID: samLID, LID: samLID, PN: samPN}, {JID: alexLID, LID: alexLID},
 	}})
 	d.fake.AddContact(samLID, "Sam Example")
-	d.patch(`{"operators":["+15550100001"],"chats":{"` + group2 + `":"none"}}`)
+	d.patch(`{"operators":["+15550100001"],"chats":{"` + group2 + `":"none"},"confirm":true}`)
 	d.emit(msg("@Example hi", mention))
 	d.emit(msg("plain", func(m *client.Message) { m.Chat = group2 }))
 
@@ -614,7 +614,7 @@ func TestGroupsAndMembership(t *testing.T) {
 		}
 	}
 	// A group the account is not in, with nothing kept, is not found.
-	d.wantError("GET", "/v1/chats/"+url.PathEscape("120363000000000009@g.us"), nil, 404, "not_found")
+	d.wantError("GET", "/v1/chats/"+url.PathEscape("120363000000000009@g.us"), nil, 404, "NOT_FOUND")
 
 	// Nothing about membership is stored: no chat row appears for the quiet group.
 	var chats struct {
@@ -625,10 +625,10 @@ func TestGroupsAndMembership(t *testing.T) {
 		t.Fatalf("chats: %+v", chats.Chats)
 	}
 
-	d.wantError("GET", "/v1/groups?x=1", nil, 400, "bad_request")
+	d.wantError("GET", "/v1/groups?x=1", nil, 400, "VALIDATION_ERROR")
 	d.fake.Emit(client.StateChange{State: "connecting", Reason: "connection lost"})
-	if e := d.wantError("GET", "/v1/groups", nil, 409, "not_connected"); e["state"] != "connecting" {
+	if e := d.wantError("GET", "/v1/groups", nil, 409, "NOT_CONNECTED"); e["state"] != "connecting" {
 		t.Fatalf("offline: %v", e)
 	}
-	d.wantError("GET", "/v1/chats/"+url.PathEscape(group2), nil, 409, "not_connected")
+	d.wantError("GET", "/v1/chats/"+url.PathEscape(group2), nil, 409, "NOT_CONNECTED")
 }

@@ -99,6 +99,9 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 	if _, err := os.Stat(l.SettingsFile()); errors.Is(err, fs.ErrNotExist) {
+		if _, err := os.Lstat(filepath.Join(l.LegacyConfigDir(), "settings.json")); err == nil {
+			return fmt.Errorf("%w %q under %s: it is still in the old place, %s; move it with `whatsapp-axi account migrate %s`", ErrNoAccount, o.Account, l.AccountsConfig(), l.LegacyConfigDir(), o.Account)
+		}
 		return fmt.Errorf("%w %q: create it with `whatsapp-axid init --account %s`", ErrNoAccount, o.Account, o.Account)
 	}
 
@@ -254,7 +257,7 @@ func CheckModes(l paths.Layout) error {
 		}
 		return nil
 	}
-	for _, root := range []string{l.ConfigRoot, l.StateRoot} {
+	for _, root := range []string{l.ConfigRoot, l.StateRoot, l.AccountsConfig(), l.AccountsState()} {
 		fi, err := os.Lstat(root)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -308,7 +311,7 @@ func Init(account string, getenv paths.Getenv) (paths.Layout, error) {
 	}
 	old := syscall.Umask(0o077)
 	defer syscall.Umask(old)
-	for _, d := range []string{l.ConfigRoot, l.StateRoot} {
+	for _, d := range []string{l.ConfigRoot, l.StateRoot, l.AccountsConfig(), l.AccountsState()} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return l, err
 		}
@@ -358,4 +361,73 @@ func Remove(account string, getenv paths.Getenv) (paths.Layout, error) {
 		_ = os.Remove(l.Socket())
 	}
 	return l, nil
+}
+
+// Moved is one directory Migrate moved.
+type Moved struct{ From, To string }
+
+// ErrMigrateConflict is a migration that finds the account in both places.
+var ErrMigrateConflict = errors.New("in both places")
+
+// Migrate moves an account from where it stood before the accounts/ level (directly under the
+// config and state roots) into <root>/accounts/<name>. Renames keep every mode. It refuses while
+// the account's daemon holds the lock at the old place, and holds that lock itself while moving.
+// An account already in place, with nothing at the old place, moves nothing.
+func Migrate(account string, getenv paths.Getenv) ([]Moved, error) {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	l, err := paths.Resolve(account, getenv)
+	if err != nil {
+		return nil, err
+	}
+	pairs := []Moved{{l.LegacyConfigDir(), l.ConfigDir()}, {l.LegacyStateDir(), l.StateDir()}}
+	var todo []Moved
+	for _, p := range pairs {
+		fi, err := os.Lstat(p.From)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		if !fi.IsDir() || fi.Mode()&fs.ModeSymlink != 0 {
+			return nil, fmt.Errorf("%s is not a directory; nothing was moved", p.From)
+		}
+		if _, err := os.Lstat(p.To); err == nil {
+			return nil, fmt.Errorf("account %q is %w: %s and %s; nothing was moved", account, ErrMigrateConflict, p.From, p.To)
+		}
+		todo = append(todo, p)
+	}
+	if len(todo) == 0 {
+		for _, p := range pairs {
+			if _, err := os.Lstat(p.To); err == nil {
+				return nil, nil
+			}
+		}
+		return nil, fmt.Errorf("%w %q", ErrNoAccount, account)
+	}
+	if fi, err := os.Lstat(l.LegacyStateDir()); err == nil && fi.IsDir() {
+		lock, err := lockfile.Acquire(filepath.Join(l.LegacyStateDir(), "daemon.lock"))
+		if errors.Is(err, lockfile.ErrHeld) {
+			return nil, fmt.Errorf("account %q: its daemon is running; stop it first: %w", account, ErrAlreadyRunning)
+		} else if err != nil {
+			return nil, err
+		}
+		defer lock.Release()
+	}
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+	for _, d := range []string{l.AccountsConfig(), l.AccountsState()} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return nil, err
+		}
+	}
+	var done []Moved
+	for _, p := range todo {
+		if err := os.Rename(p.From, p.To); err != nil {
+			return done, fmt.Errorf("moving %s to %s: %w", p.From, p.To, err)
+		}
+		done = append(done, p)
+	}
+	return done, nil
 }

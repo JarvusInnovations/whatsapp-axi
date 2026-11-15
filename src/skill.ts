@@ -1,7 +1,7 @@
 // The installable skill's command reference (specs/cli.md "Agent integrations"), generated from the
-// CLI's own command specs so the skill cannot drift from the implementation. The prose of
+// one command reference (src/reference.ts) so the skill cannot drift from the implementation. The prose of
 // skills/whatsapp-axi/SKILL.md is hand-written and lives outside the generated markers.
-import type { CommandSpec } from "./args.js";
+import type { CommandSpec } from "./flags.js";
 
 /** How the skill tells an agent to run the CLI: it may not be installed on PATH. */
 export const SKILL_INVOCATION = "npx -y whatsapp-axi";
@@ -9,15 +9,16 @@ export const SKILL_INVOCATION = "npx -y whatsapp-axi";
 function usage(spec: CommandSpec): string {
   const pos = spec.positionals.map((p) => (p.required ? `<${p.name}>` : `[<${p.name}>]`)).join(" ");
   const flags = Object.entries(spec.flags)
-    .filter(([n]) => n !== "account")
     .map(([n, f]) => (f.type === "bool" ? `[--${n}]` : `[--${n} ${f.value ?? "<value>"}]`))
     .join(" ");
-  return [spec.name, pos, flags].filter(Boolean).join(" ");
+  return [spec.name, pos, flags, spec.jsonOut ? "[--json-out[=path]]" : ""].filter(Boolean).join(" ");
 }
 
-export function commandReferenceMarkdown(specs: CommandSpec[]): string {
-  const sorted = [...specs].sort((a, b) => a.name.localeCompare(b.name));
-  return sorted.map((s) => `- \`${SKILL_INVOCATION} ${usage(s)}\` — ${s.summary}`).join("\n");
+/** The reference, one list per group, in reference order. */
+export function commandReferenceMarkdown(groups: { title: string; specs: CommandSpec[] }[]): string {
+  return groups
+    .map((g) => [`### ${g.title[0].toUpperCase()}${g.title.slice(1)}`, "", ...g.specs.map((s) => `- \`${SKILL_INVOCATION} ${usage(s)}\` — ${s.summary}`)].join("\n"))
+    .join("\n\n");
 }
 
 /** Replaces each generated region between its markers. Throws when a region's markers are missing. */

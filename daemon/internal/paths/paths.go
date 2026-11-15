@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -18,11 +19,14 @@ const App = "whatsapp-axi"
 
 var accountRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,23}$`)
 
+// Reserved names an account may not take: the tool's own entries at the roots.
+var reserved = map[string]bool{"accounts": true, "config.json": true}
+
 // ValidAccount reports whether name is a valid account name.
-func ValidAccount(name string) bool { return accountRe.MatchString(name) }
+func ValidAccount(name string) bool { return accountRe.MatchString(name) && !reserved[name] }
 
 // ErrBadAccount is returned for a name that does not match the account-name rule.
-var ErrBadAccount = errors.New("account names match ^[a-z][a-z0-9-]{0,23}$")
+var ErrBadAccount = errors.New("account names match ^[a-z][a-z0-9-]{0,23}$ and are not accounts")
 
 // Layout is every path of one account.
 type Layout struct {
@@ -33,15 +37,23 @@ type Layout struct {
 	RuntimeRoot string // <runtime>
 }
 
-func (l Layout) ConfigDir() string    { return filepath.Join(l.ConfigRoot, l.Account) }
+// AccountsConfig and AccountsState hold one directory per account (specs/conventions.md "Storage").
+func (l Layout) AccountsConfig() string { return filepath.Join(l.ConfigRoot, "accounts") }
+func (l Layout) AccountsState() string  { return filepath.Join(l.StateRoot, "accounts") }
+
+func (l Layout) ConfigDir() string    { return filepath.Join(l.AccountsConfig(), l.Account) }
 func (l Layout) SettingsFile() string { return filepath.Join(l.ConfigDir(), "settings.json") }
-func (l Layout) StateDir() string     { return filepath.Join(l.StateRoot, l.Account) }
-func (l Layout) SessionDB() string    { return filepath.Join(l.StateDir(), "session.db") }
-func (l Layout) StoreDB() string      { return filepath.Join(l.StateDir(), "store.db") }
-func (l Layout) MediaDir() string     { return filepath.Join(l.StateDir(), "media") }
-func (l Layout) LockFile() string     { return filepath.Join(l.StateDir(), "daemon.lock") }
-func (l Layout) Socket() string       { return filepath.Join(l.RuntimeRoot, l.Account+".sock") }
-func (l Layout) DaemonBinary() string { return filepath.Join(l.DataRoot, "bin", "whatsapp-axid") }
+func (l Layout) StateDir() string     { return filepath.Join(l.AccountsState(), l.Account) }
+
+// LegacyConfigDir and LegacyStateDir are where an account stood before the accounts/ level.
+func (l Layout) LegacyConfigDir() string { return filepath.Join(l.ConfigRoot, l.Account) }
+func (l Layout) LegacyStateDir() string  { return filepath.Join(l.StateRoot, l.Account) }
+func (l Layout) SessionDB() string       { return filepath.Join(l.StateDir(), "session.db") }
+func (l Layout) StoreDB() string         { return filepath.Join(l.StateDir(), "store.db") }
+func (l Layout) MediaDir() string        { return filepath.Join(l.StateDir(), "media") }
+func (l Layout) LockFile() string        { return filepath.Join(l.StateDir(), "daemon.lock") }
+func (l Layout) Socket() string          { return filepath.Join(l.RuntimeRoot, l.Account+".sock") }
+func (l Layout) DaemonBinary() string    { return filepath.Join(l.DataRoot, "bin", "whatsapp-axid") }
 
 // Getenv is the environment lookup used for resolution; os.Getenv in production.
 type Getenv func(string) string
@@ -77,6 +89,10 @@ func Roots(getenv Getenv) (Layout, error) {
 		return l, err
 	}
 	l.ConfigRoot = filepath.Join(l.ConfigRoot, App)
+	// WHATSAPP_AXI_CONFIG_DIR, when set to an absolute path, is the config root itself.
+	if v := strings.TrimSpace(getenv("WHATSAPP_AXI_CONFIG_DIR")); v != "" && filepath.IsAbs(v) {
+		l.ConfigRoot = v
+	}
 	l.StateRoot = filepath.Join(l.StateRoot, App)
 	l.DataRoot = filepath.Join(l.DataRoot, App)
 	l.RuntimeRoot = runtimeRoot(getenv, l.StateRoot)

@@ -28,6 +28,7 @@ subcommands:
   run --account <name> [--log-level debug|info|warn|error]   run the account's daemon in the foreground
   init --account <name>                                       create the account's files with default settings
   remove --account <name>                                     delete the account's config and state
+  migrate --account <name>                                    move an account from the old layout into accounts/
   version                                                     print the daemon and library versions
 `
 
@@ -55,7 +56,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "-h", "--help", "help":
 		fmt.Fprint(stdout, usage)
 		return 0
-	case "run", "init", "remove":
+	case "run", "init", "remove", "migrate":
 	default:
 		fmt.Fprintf(stderr, "whatsapp-axid: unknown subcommand %q\n%s", sub, usage)
 		return 2
@@ -91,6 +92,20 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		fmt.Fprintf(stdout, "created account %s\nsettings: %s\nstate: %s\n", *account, l.SettingsFile(), l.StateDir())
+		return 0
+	case "migrate":
+		moved, err := runner.Migrate(*account, nil)
+		if err != nil {
+			fmt.Fprintf(stderr, "whatsapp-axid migrate: %v\n", err)
+			return 1
+		}
+		if len(moved) == 0 {
+			fmt.Fprintf(stdout, "account %s is already in place\n", *account)
+			return 0
+		}
+		for _, m := range moved {
+			fmt.Fprintf(stdout, "moved %s -> %s\n", m.From, m.To)
+		}
 		return 0
 	case "remove":
 		if _, err := runner.Remove(*account, nil); err != nil {

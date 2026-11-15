@@ -94,7 +94,7 @@ func TestLinkByPairingCode(t *testing.T) {
 		t.Fatalf("state while linking: %s", st.State)
 	}
 	// A second attempt while one runs.
-	d.wantError("POST", "/v1/link", `{"qr":true}`, 409, "link_in_progress")
+	d.wantError("POST", "/v1/link", `{"qr":true}`, 409, "LINK_IN_PROGRESS")
 	close(release)
 	l := recvLine(t, lines)
 	if l.Result == nil || !l.Result.Linked || l.Result.State != "connected" || l.Result.Me == nil || l.Result.Me.ID != ownLID {
@@ -120,7 +120,7 @@ func TestLinkByPairingCode(t *testing.T) {
 		t.Fatalf("state events %v", kinds)
 	}
 	// Linking an account that is linked is refused.
-	d.wantError("POST", "/v1/link", `{"phone":"+15550100000"}`, 400, "bad_request")
+	d.wantError("POST", "/v1/link", `{"phone":"+15550100000"}`, 400, "VALIDATION_ERROR")
 }
 
 func waitFor(t *testing.T, cond func() bool) {
@@ -161,7 +161,7 @@ func TestLinkWithADifferentNumberIsRefused(t *testing.T) {
 	_, lines, _ := d.linkStream(context.Background(), `{"phone":"+15550100000"}`)
 	recvLine(t, lines)
 	l := recvLine(t, lines)
-	if l.Result == nil || l.Result.Linked || l.Result.Error == nil || l.Result.Error.Code != "wrong_number" || l.Result.State != "unlinked" {
+	if l.Result == nil || l.Result.Linked || l.Result.Error == nil || l.Result.Error.Code != "WRONG_NUMBER" || l.Result.State != "unlinked" {
 		t.Fatalf("%+v", l.Result)
 	}
 	if st := d.state(); st.State != "unlinked" || st.Me != nil {
@@ -178,7 +178,7 @@ func TestLinkWindowTimesOut(t *testing.T) {
 	_, lines, _ := d.linkStream(context.Background(), `{"phone":"+15550100000"}`)
 	recvLine(t, lines)
 	l := recvLine(t, lines)
-	if l.Result == nil || l.Result.Error == nil || l.Result.Error.Code != "link_timeout" || l.Result.State != "unlinked" {
+	if l.Result == nil || l.Result.Error == nil || l.Result.Error.Code != "LINK_TIMEOUT" || l.Result.State != "unlinked" {
 		t.Fatalf("%+v", l.Result)
 	}
 	// The daemon's own bound on the window, when the client never ends the attempt.
@@ -189,7 +189,7 @@ func TestLinkWindowTimesOut(t *testing.T) {
 	_, lines, _ = d.linkStream(context.Background(), `{"phone":"+15550100000"}`)
 	recvLine(t, lines)
 	l = recvLine(t, lines)
-	if l.Result == nil || l.Result.Error == nil || l.Result.Error.Code != "link_timeout" {
+	if l.Result == nil || l.Result.Error == nil || l.Result.Error.Code != "LINK_TIMEOUT" {
 		t.Fatalf("%+v", l.Result)
 	}
 	if st := d.state(); st.State != "unlinked" {
@@ -222,9 +222,9 @@ func TestLinkBadRequests(t *testing.T) {
 	e.init()
 	d := e.start(startOpts{fake: unlinkedFake()})
 	for _, body := range []string{`{}`, `{"phone":"15550100000"}`, `{"phone":"+1555","qr":true}`, `{"qr":false}`, `{"phone":"+15550100000","x":1}`, `nope`} {
-		d.wantError("POST", "/v1/link", body, 400, "bad_request")
+		d.wantError("POST", "/v1/link", body, 400, "VALIDATION_ERROR")
 	}
-	d.wantError("POST", "/v1/link?x=1", `{"qr":true}`, 400, "bad_request")
+	d.wantError("POST", "/v1/link?x=1", `{"qr":true}`, 400, "VALIDATION_ERROR")
 }
 
 func TestLinkAgainAfterLoggedOut(t *testing.T) {
@@ -248,7 +248,7 @@ func TestLogout(t *testing.T) {
 	fc := fake.New("connected", client.Own{PN: ownPN, LID: ownLID})
 	d := e.start(startOpts{fake: fc})
 	kept := d.emit(msg("@Example kept", mention))
-	d.wantError("POST", "/v1/logout", `{"x":1}`, 400, "bad_request")
+	d.wantError("POST", "/v1/logout", `{"x":1}`, 400, "VALIDATION_ERROR")
 	code, body := d.do("POST", "/v1/logout", nil)
 	if code != 200 || !strings.Contains(string(body), `"logged_out":true`) {
 		t.Fatalf("%d %s", code, body)
@@ -264,14 +264,14 @@ func TestLogout(t *testing.T) {
 		t.Fatal("logout deleted kept content")
 	}
 	// Again: there is no session.
-	d.wantError("POST", "/v1/logout", `{}`, 409, "not_linked")
+	d.wantError("POST", "/v1/logout", `{}`, 409, "NOT_LINKED")
 }
 
 func TestLogoutNeedsAConnection(t *testing.T) {
 	e := newEnv(t)
 	e.init()
 	d := e.start(startOpts{state: "connecting"})
-	er := d.wantError("POST", "/v1/logout", nil, 409, "not_connected")
+	er := d.wantError("POST", "/v1/logout", nil, 409, "NOT_CONNECTED")
 	if er["state"] != "connecting" {
 		t.Fatalf("%+v", er)
 	}
@@ -305,7 +305,7 @@ func TestStoppedStatesNeitherRetryNorExit(t *testing.T) {
 				t.Fatalf("%+v", last)
 			}
 			if st != "logged_out" {
-				d.wantError("POST", "/v1/link", `{"qr":true}`, 400, "bad_request")
+				d.wantError("POST", "/v1/link", `{"qr":true}`, 400, "VALIDATION_ERROR")
 			}
 		})
 	}

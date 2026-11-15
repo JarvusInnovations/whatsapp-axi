@@ -33,7 +33,7 @@ const DAEMON_BACKED: string[][] = [
   ["scope", "set", "tagged"],
   ["scope", "dm-from", "anyone", "--confirm"],
   ["operators", "list"],
-  ["operators", "add", "+15550100001"],
+  ["operators", "add", "+15550100001", "--confirm"],
   ["operators", "remove", "+15550100001"],
   ["settings", "show"],
   ["settings", "set", "presence", "false"],
@@ -45,7 +45,7 @@ describe("with no daemon running", () => {
     for (const argv of DAEMON_BACKED) {
       const r = await run(argv);
       expect(r.code, argv.join(" ")).toBe(1);
-      expect(r.out, argv.join(" ")).toContain("code: daemon_not_running");
+      expect(r.out, argv.join(" ")).toContain("code: DAEMON_NOT_RUNNING");
       expect(r.out, argv.join(" ")).toContain("whatsapp-axi daemon start example");
     }
   });
@@ -54,7 +54,7 @@ describe("with no daemon running", () => {
     addAccount(env, "example");
     const r = await run(["doctor"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("whatsapp-axi daemon start example");
+    expect(r.out).toContain("Run `whatsapp-axi daemon install example` to fix daemon of example");
   });
 });
 
@@ -73,7 +73,7 @@ describe("choosing the account", () => {
     addAccount(env, "alpha");
     let r = await run(["chats", "--account", "gamma"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: no_account");
+    expect(r.out).toContain("code: NO_ACCOUNT");
     expect(r.out).toContain("account add gamma");
     r = await run(["chats", "--account", "+15550100001"]);
     expect(r.code).toBe(2);
@@ -89,17 +89,53 @@ describe("usage errors", () => {
       const r = await run(argv);
       expect(r.code, spec.name).toBe(2);
       expect(r.out, spec.name).toContain("unknown flag --bogus");
-      expect(r.out, spec.name).toContain(`valid flags for \`${spec.name}\``);
+      expect(r.out, spec.name).toMatch(new RegExp(`(valid flags for|\`${spec.name}\` takes no flags of its own)`));
+      expect(r.out, spec.name).toContain("code: UNKNOWN_FLAG");
+      expect(r.out, spec.name).toContain("--account and --tz always allowed");
     }
+  });
+
+  it("names the guessed flags: --json, -n, and --json-out where a command has none", async () => {
+    addAccount(env, "example");
+    let r = await run(["chats", "--json"]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("code: UNKNOWN_FLAG");
+    expect(r.out).toContain("add --json-out");
+    r = await run(["chats", "-n", "5"]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("use --limit");
+    r = await run(["accounts", "--json-out"]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("`accounts` writes no JSON file; --json-out works on");
+    r = await run(["send", "x", "y", "--force"]);
+    expect(r.out).toContain("--confirm");
+  });
+
+  it("--json-out in the space form is a usage error naming the = form", async () => {
+    addAccount(env, "example");
+    const r = await run(["chats", "--json-out", "out.txt"]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("code: USAGE");
+    expect(r.out).toContain("--json-out=out.txt");
   });
 
   it("missing values, missing arguments and extra arguments exit 2", async () => {
     addAccount(env, "example");
-    const cases = [["events", "--after"], ["events", "--limit", "--follow"], ["read"], ["chat", "view"], ["chats", "extra"], ["scope"], ["scope", "nope"], ["account", "add"], ["chats", "--account"], ["bogus"], ["-x"]];
+    const cases = [["events", "--after"], ["events", "--limit", "--follow"], ["read"], ["chat", "view"], ["chats", "extra"], ["scope"], ["account", "add"], ["chats", "--account"], ["chats", "--account", "a", "--account", "b"], ["chats", "--limit", "1", "--limit", "2"], ["-x"]];
     for (const argv of cases) {
       const r = await run(argv);
       expect(r.code, argv.join(" ")).toBe(2);
-      expect(r.out, argv.join(" ")).toContain("code: usage");
+      expect(r.out, argv.join(" ")).toContain("code: USAGE");
+    }
+  });
+
+  it("bad values, contradictions and unknown subcommands are VALIDATION_ERROR, exit 2", async () => {
+    addAccount(env, "example");
+    const cases = [["scope", "nope"], ["bogus"], ["events", "--kind", "bogus"], ["events", "--limit", "abc"], ["chats", "--fields", "nope"], ["auth", "link", "--phone", "+15550100000", "--qr"], ["mark-read", "x/y", "--chat", "x"], ["chats", "--tz", "Mars/Olympus"], ["chats", "--account", "Not Valid"]];
+    for (const argv of cases) {
+      const r = await run(argv);
+      expect(r.code, argv.join(" ")).toBe(2);
+      expect(r.out, argv.join(" ")).toContain("code: VALIDATION_ERROR");
     }
   });
 
@@ -172,23 +208,23 @@ describe("daemon errors on every daemon-backed command", () => {
         for (const m of ["GET", "PATCH", "POST"]) fake.route(`${m} /v1/*`, reply);
         fake.route("GET /v1/status", () => ({ body: STATUS }));
       };
-      all(() => apiError(500, "internal", "Internal error in the daemon; see its log."));
+      all(() => apiError(500, "INTERNAL_ERROR", "Internal error in the daemon; see its log."));
       for (const argv of DAEMON_BACKED) {
         const r = await run(argv);
         expect(r.code, argv.join(" ")).toBe(1);
-        expect(r.out, argv.join(" ")).toContain("code: internal");
+        expect(r.out, argv.join(" ")).toContain("code: INTERNAL_ERROR");
       }
       all(() => ({ raw: "<html>" }));
       for (const argv of DAEMON_BACKED) {
         const r = await run(argv);
         expect(r.code, argv.join(" ")).toBe(1);
-        expect(r.out, argv.join(" ")).toContain("code: bad_response");
+        expect(r.out, argv.join(" ")).toContain("code: UNEXPECTED_RESPONSE");
       }
       fake.route("GET /v1/status", () => ({ body: { ...STATUS, protocol: 7 } }));
       for (const argv of DAEMON_BACKED) {
         const r = await run(argv);
         expect(r.code, argv.join(" ")).toBe(1);
-        expect(r.out, argv.join(" ")).toContain("code: protocol_mismatch");
+        expect(r.out, argv.join(" ")).toContain("code: PROTOCOL_MISMATCH");
       }
     } finally {
       await fake.close();
@@ -214,7 +250,7 @@ describe("daemon errors on every daemon-backed command", () => {
     try {
       const r = await run(["events", "--follow"]);
       expect(r.code).toBe(1);
-      expect(r.out).toContain("code: stream_closed");
+      expect(r.out).toContain("code: STREAM_CLOSED");
     } finally {
       await fake.close();
     }
@@ -222,7 +258,7 @@ describe("daemon errors on every daemon-backed command", () => {
 });
 
 describe("a daemon that does not answer", () => {
-  it("times out with daemon_timeout", async () => {
+  it("times out with TIMEOUT, naming the variable that extends the deadline", async () => {
     const { createServer } = await import("node:http");
     const { Daemon } = await import("../src/client.js");
     const { socketPath } = await import("./helpers.js");
@@ -233,10 +269,86 @@ describe("a daemon that does not answer", () => {
     });
     await new Promise<void>((r) => server.listen(sock, () => r()));
     try {
-      await expect(new Daemon("example", sock, 200).status()).rejects.toMatchObject({ code: "daemon_timeout" });
+      const err = (await new Daemon("example", sock, 200).status().catch((e) => e)) as { code: string; suggestions: string[] };
+      expect(err.code).toBe("TIMEOUT");
+      expect(err.suggestions.join(" ")).toContain("WHATSAPP_AXI_TIMEOUT_MS");
     } finally {
       server.closeAllConnections();
       await new Promise((r) => server.close(r));
     }
+  });
+});
+
+describe("output vocabulary", () => {
+  it("an empty events result echoes its filters", async () => {
+    const { FakeDaemon, socketPath } = await import("./helpers.js");
+    addAccount(env, "example");
+    const fake = new FakeDaemon();
+    fake.route("GET /v1/events", () => ({ body: { events: [], latest_seq: 412 } }));
+    await fake.listen(socketPath(env, "example"));
+    try {
+      const r = await run(["events", "--after", "412", "--chat", GROUP, "--kind", "message"]);
+      expect(r.code, r.out).toBe(0);
+      expect(r.out).toContain(`events: 0 events after seq 412 in ${GROUP} of kind message`);
+      expect(r.out).toContain(`--follow --chat ${GROUP} --kind message`);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it("times are shown in the --tz zone with their offset, named once; a read honours WHATSAPP_AXI_TIMEOUT_MS", async () => {
+    const { FakeDaemon, socketPath } = await import("./helpers.js");
+    addAccount(env, "example");
+    const fake = new FakeDaemon();
+    fake.route("GET /v1/messages", () => ({ body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [{ id: "3EB0AAAA0000000001", t: "2030-07-05T14:00:00Z", from: { id: "1@lid", name: "Sam" }, text: "hi" }], more: false } }));
+    await fake.listen(socketPath(env, "example"));
+    try {
+      let r = await run(["read", GROUP, "--tz", "Europe/Berlin"]);
+      expect(r.code, r.out).toBe(0);
+      expect(r.out).toContain("tz: Europe/Berlin");
+      expect(r.out).toContain("2030-07-05T16:00:00+02:00");
+      expect(r.out.match(/tz:/g)).toHaveLength(1);
+      fake.route("GET /v1/messages", () => ({ hang: true }));
+      const t0 = Date.now();
+      r = await run(["read", GROUP], { env: { WHATSAPP_AXI_TIMEOUT_MS: "200" } });
+      expect(Date.now() - t0).toBeLessThan(3000);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("code: TIMEOUT");
+      expect(r.out).toContain("WHATSAPP_AXI_TIMEOUT_MS");
+    } finally {
+      await fake.close();
+    }
+  });
+
+  it("update is shadowed: it names daemon upgrade when daemons are installed", async () => {
+    const { setUpdater } = await import("../src/commands/update.js");
+    addAccount(env, "example");
+    const units = join(env.home, "config", "systemd", "user", "default.target.wants");
+    mkdirSync(units, { recursive: true });
+    writeFileSync(join(units, "whatsapp-axi@example.service"), "");
+    setUpdater(async () => ({ update: "whatsapp-axi upgraded to 9.9.9" }));
+    try {
+      let r = await run(["update"]);
+      expect(r.code, r.out).toBe(0);
+      expect(r.out).toContain("still run the old daemon binary");
+      expect(r.out).toContain("Run `whatsapp-axi daemon upgrade`");
+      setUpdater(async () => {
+        throw new Error("registry unreachable");
+      });
+      r = await run(["update"]);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("code: UPSTREAM_ERROR");
+    } finally {
+      const { runUpdate } = await import("axi-sdk-js");
+      setUpdater(runUpdate as never);
+    }
+  });
+
+  it("only one module imports the TOON encoder", async () => {
+    const { readdirSync } = await import("node:fs");
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]));
+    const src = join(import.meta.dirname, "..", "src");
+    const importers = walk(src).filter((f) => f.endsWith(".ts") && readFileSync(f, "utf-8").includes("@toon-format/toon"));
+    expect(importers.map((f) => f.slice(src.length + 1))).toEqual(["output/toon.ts"]);
   });
 });

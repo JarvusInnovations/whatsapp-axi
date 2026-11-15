@@ -108,7 +108,7 @@ func TestFailedSendIsMarkedAndNotRetried(t *testing.T) {
 	d.fake.SendErr = errors.New("server said no")
 	code, body := d.post("/v1/send", map[string]any{"chat": group, "text": "hello"})
 	e := body["error"].(map[string]any)
-	if code != 502 || e["code"] != "whatsapp_error" || strings.Contains(fmt.Sprint(e["message"]), "server said no") {
+	if code != 502 || e["code"] != "UPSTREAM_ERROR" || strings.Contains(fmt.Sprint(e["message"]), "server said no") {
 		t.Fatalf("%d %+v", code, body)
 	}
 	time.Sleep(100 * time.Millisecond)
@@ -168,7 +168,7 @@ func TestReplyIsBuiltFromTheKeptCopy(t *testing.T) {
 	if bytes.Contains(b, keys) || bytes.Contains(b, []byte(base64.StdEncoding.EncodeToString(keys))) {
 		t.Fatal("the quote carries key material")
 	}
-	d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "x", "reply_to": "3EB0NOPE"}, 404, "not_found")
+	d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "x", "reply_to": "3EB0NOPE"}, 404, "NOT_FOUND")
 	if len(d.fake.Sent()) != 2 {
 		t.Fatal("a refused reply was sent")
 	}
@@ -185,17 +185,17 @@ func TestMentions(t *testing.T) {
 	if m := d.fake.Sent()[1]; m.Text != "hi @100000000000001" {
 		t.Fatalf("text changed: %q", m.Text)
 	}
-	d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "x", "mentions": []string{caseyPN}}, 400, "bad_request")
-	d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "x", "mentions": []string{"nobody"}}, 400, "bad_request")
+	d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "x", "mentions": []string{caseyPN}}, 400, "VALIDATION_ERROR")
+	d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "x", "mentions": []string{"nobody"}}, 400, "VALIDATION_ERROR")
 }
 
 func TestSendRequestsValidated(t *testing.T) {
 	d, _ := keptGroup(t)
 	for _, body := range []any{`{}`, `{"chat":"` + group + `"}`, `{"chat":"` + group + `","text":"  "}`, `{"chat":"` + group + `","text":"x","y":1}`, `{"chat":"bogus","text":"x"}`} {
-		d.wantError("POST", "/v1/send", body, 400, "bad_request")
+		d.wantError("POST", "/v1/send", body, 400, "VALIDATION_ERROR")
 	}
 	for _, body := range []any{`{"chat":"` + group + `","path":"relative.pdf"}`, `{"chat":"` + group + `","path":"/nonexistent/x.pdf"}`, `{"chat":"` + group + `","path":"/tmp","as":"pdf"}`} {
-		d.wantError("POST", "/v1/send-file", body, 400, "bad_request")
+		d.wantError("POST", "/v1/send-file", body, 400, "VALIDATION_ERROR")
 	}
 	if len(d.fake.Sent()) != 0 {
 		t.Fatal("something was sent")
@@ -269,10 +269,10 @@ func TestSendFiles(t *testing.T) {
 	}
 	// Audio cannot carry a caption; the size limit holds.
 	ogg := writeFile(t, "note.ogg", []byte("OggS fake"))
-	d.wantError("POST", "/v1/send-file", map[string]any{"chat": group, "path": ogg, "caption": "x"}, 400, "bad_request")
+	d.wantError("POST", "/v1/send-file", map[string]any{"chat": group, "path": ogg, "caption": "x"}, 400, "VALIDATION_ERROR")
 	d.patch(`{"send":{"max_file_mb":1}}`)
 	big := writeFile(t, "big.pdf", make([]byte, 1<<20+1))
-	d.wantError("POST", "/v1/send-file", map[string]any{"chat": group, "path": big}, 400, "bad_request")
+	d.wantError("POST", "/v1/send-file", map[string]any{"chat": group, "path": big}, 400, "VALIDATION_ERROR")
 	if len(d.fake.Sent()) != 5 {
 		t.Fatal("a refused file was sent")
 	}
@@ -326,14 +326,14 @@ func TestDownload(t *testing.T) {
 	vo := d.emit(msg("@Example once", mention, func(mm *client.Message) {
 		mm.Media = &client.Media{Type: "image", MIME: "image/jpeg", ViewOnce: true, Keys: []byte("vo")}
 	}))
-	d.wantError("POST", "/v1/download", map[string]any{"chat": group, "id": vo.ID}, 422, "not_downloadable")
+	d.wantError("POST", "/v1/download", map[string]any{"chat": group, "id": vo.ID}, 422, "NOT_DOWNLOADABLE")
 	plain := d.emit(msg("@Example no media", mention))
-	d.wantError("POST", "/v1/download", map[string]any{"chat": group, "id": plain.ID}, 422, "not_downloadable")
+	d.wantError("POST", "/v1/download", map[string]any{"chat": group, "id": plain.ID}, 422, "NOT_DOWNLOADABLE")
 	gone := d.emit(msg("@Example old", mention, func(mm *client.Message) {
 		mm.Media = &client.Media{Type: "image", MIME: "image/jpeg", Keys: []byte("expired")}
 	}))
-	d.wantError("POST", "/v1/download", map[string]any{"chat": group, "id": gone.ID}, 422, "not_downloadable")
-	d.wantError("POST", "/v1/download", map[string]any{"chat": group, "id": "3EB0NOPE"}, 404, "not_found")
+	d.wantError("POST", "/v1/download", map[string]any{"chat": group, "id": gone.ID}, 422, "NOT_DOWNLOADABLE")
+	d.wantError("POST", "/v1/download", map[string]any{"chat": group, "id": "3EB0NOPE"}, 404, "NOT_FOUND")
 	// Downloads do not count toward the send limits.
 	d.patch(`{"send":{"per_minute":1}}`)
 	d.do("POST", "/v1/download", map[string]any{"id": m.ID})
@@ -378,8 +378,8 @@ func TestReact(t *testing.T) {
 	if v := d.message(group, parent.ID); len(v.Reactions) != 0 {
 		t.Fatalf("%+v", v.Reactions)
 	}
-	d.wantError("POST", "/v1/react", map[string]any{"chat": group, "id": parent.ID}, 400, "bad_request")
-	d.wantError("POST", "/v1/react", map[string]any{"chat": group, "id": "3EB0NOPE", "emoji": "x"}, 404, "not_found")
+	d.wantError("POST", "/v1/react", map[string]any{"chat": group, "id": parent.ID}, 400, "VALIDATION_ERROR")
+	d.wantError("POST", "/v1/react", map[string]any{"chat": group, "id": "3EB0NOPE", "emoji": "x"}, 404, "NOT_FOUND")
 }
 
 func TestNotConnectedRefusesEverySend(t *testing.T) {
@@ -387,9 +387,9 @@ func TestNotConnectedRefusesEverySend(t *testing.T) {
 		t.Run(st, func(t *testing.T) {
 			d, parent := keptGroup(t)
 			d.fake.Emit(client.StateChange{State: st})
-			want := "not_connected"
+			want := "NOT_CONNECTED"
 			if st == "logged_out" {
-				want = "not_linked"
+				want = "NOT_LINKED"
 			}
 			e := d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "x"}, 409, want)
 			if e["state"] != st {
@@ -414,9 +414,9 @@ func TestSendLimitsAtTheSocket(t *testing.T) {
 	t.Run("first contact", func(t *testing.T) {
 		d, _ := keptGroup(t)
 		before := d.fake.AttemptCount()
-		d.wantError("POST", "/v1/send", map[string]any{"chat": "+15550100003", "text": "hello"}, 409, "first_contact")
-		d.wantError("POST", "/v1/send", map[string]any{"chat": group2, "text": "hello"}, 409, "first_contact")
-		d.wantError("POST", "/v1/send-file", map[string]any{"chat": group2, "path": writeFile(t, "a.pdf", []byte("%PDF"))}, 409, "first_contact")
+		d.wantError("POST", "/v1/send", map[string]any{"chat": "+15550100003", "text": "hello"}, 409, "FIRST_CONTACT")
+		d.wantError("POST", "/v1/send", map[string]any{"chat": group2, "text": "hello"}, 409, "FIRST_CONTACT")
+		d.wantError("POST", "/v1/send-file", map[string]any{"chat": group2, "path": writeFile(t, "a.pdf", []byte("%PDF"))}, 409, "FIRST_CONTACT")
 		if d.fake.AttemptCount() != before {
 			t.Fatal("sent")
 		}
@@ -456,11 +456,11 @@ func TestSendLimitsAtTheSocket(t *testing.T) {
 		d.send(map[string]any{"chat": group, "text": "2"})
 		d.post("/v1/react", map[string]any{"chat": group, "id": parent.ID, "emoji": "👍"}) // reactions count
 		n := d.countMessages(group)
-		e := d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "4"}, 429, "rate_limited")
+		e := d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "4"}, 429, "RATE_LIMITED")
 		if e["retry_after_seconds"] == nil || e["retry_after_seconds"].(float64) < 1 {
 			t.Fatalf("%+v", e)
 		}
-		d.wantError("POST", "/v1/react", map[string]any{"chat": group, "id": parent.ID, "emoji": "❤"}, 429, "rate_limited")
+		d.wantError("POST", "/v1/react", map[string]any{"chat": group, "id": parent.ID, "emoji": "❤"}, 429, "RATE_LIMITED")
 		if d.countMessages(group) != n || d.fake.AttemptCount() != 3 {
 			t.Fatal("a refused send was sent or recorded")
 		}
@@ -468,7 +468,7 @@ func TestSendLimitsAtTheSocket(t *testing.T) {
 		d.send(map[string]any{"chat": group, "text": "5"})
 		d.send(map[string]any{"chat": group, "text": "6"}) // the fifth this hour
 		d.clock.Add(61 * time.Second)
-		e = d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "7"}, 429, "rate_limited")
+		e = d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "7"}, 429, "RATE_LIMITED")
 		if !strings.Contains(fmt.Sprint(e["message"]), "per hour") {
 			t.Fatalf("%+v", e)
 		}
@@ -485,7 +485,7 @@ func TestSendLimitsAtTheSocket(t *testing.T) {
 		d.send(map[string]any{"chat": "+15550100002", "text": "  Buy now\n"}) // compared after trimming
 		d.send(map[string]any{"chat": "+15550100001", "text": "Buy now"})     // the same chat again is fine
 		before := d.fake.AttemptCount()
-		d.wantError("POST", "/v1/send", map[string]any{"chat": "+15550100003", "text": "Buy now"}, 429, "duplicate_text")
+		d.wantError("POST", "/v1/send", map[string]any{"chat": "+15550100003", "text": "Buy now"}, 429, "DUPLICATE_TEXT")
 		if d.fake.AttemptCount() != before || d.countChats() != 2 {
 			t.Fatal("a refused send was sent or recorded")
 		}
@@ -599,7 +599,7 @@ func TestSendFinishesWhenTheClientDisconnects(t *testing.T) {
 	}
 }
 
-// TestSendOutcomeUnknown: a send the daemon cannot settle is outcome_unknown, never a plain
+// TestSendOutcomeUnknown: a send the daemon cannot settle is OUTCOME_UNKNOWN, never a plain
 // failure, and its row stays pending.
 func TestSendOutcomeUnknown(t *testing.T) {
 	t.Run("the daemon's send timeout", func(t *testing.T) {
@@ -608,7 +608,7 @@ func TestSendOutcomeUnknown(t *testing.T) {
 		core.SendTimeout = 100 * time.Millisecond
 		defer func() { core.SendTimeout = old }()
 		d.fake.SetSendWait(make(chan struct{}))
-		e := d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "slow"}, 504, "outcome_unknown")
+		e := d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "slow"}, 504, "OUTCOME_UNKNOWN")
 		if !strings.Contains(e["message"].(string), "may have gone out") {
 			t.Fatalf("%v", e)
 		}
@@ -616,19 +616,19 @@ func TestSendOutcomeUnknown(t *testing.T) {
 		if last := msgs[len(msgs)-1]; last.Text != "slow" || last.Status != "pending" {
 			t.Fatalf("row %+v", last)
 		}
-		d.wantError("POST", "/v1/react", map[string]any{"chat": group, "id": parent.ID, "emoji": "👍"}, 504, "outcome_unknown")
+		d.wantError("POST", "/v1/react", map[string]any{"chat": group, "id": parent.ID, "emoji": "👍"}, 504, "OUTCOME_UNKNOWN")
 	})
 	t.Run("the client cannot tell", func(t *testing.T) {
 		d, _ := keptGroup(t)
 		d.fake.SetSendErr(fmt.Errorf("%w: timed out", client.ErrOutcomeUnknown))
-		d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "unsure"}, 504, "outcome_unknown")
+		d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "unsure"}, 504, "OUTCOME_UNKNOWN")
 		msgs := d.messages(group)
 		if last := msgs[len(msgs)-1]; last.Status != "pending" {
 			t.Fatalf("row %+v", last)
 		}
 		// A refusal is still a plain failure, and the row is failed.
 		d.fake.SetSendErr(fmt.Errorf("refused"))
-		d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "refused"}, 502, "whatsapp_error")
+		d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "refused"}, 502, "UPSTREAM_ERROR")
 	})
 }
 
@@ -690,7 +690,7 @@ func TestForgetFailsWhenMediaStays(t *testing.T) {
 	media := d.env.layout().MediaDir()
 	os.Chmod(media, 0o500)
 	defer os.Chmod(media, 0o700)
-	e := d.wantError("POST", "/v1/forget", map[string]string{"chat": group, "id": m.ID}, 500, "internal")
+	e := d.wantError("POST", "/v1/forget", map[string]string{"chat": group, "id": m.ID}, 500, "INTERNAL_ERROR")
 	if !strings.Contains(e["message"].(string), "Nothing was forgotten") || strings.Contains(e["message"].(string), media) {
 		t.Fatalf("%v", e)
 	}
@@ -704,4 +704,67 @@ func TestForgetFailsWhenMediaStays(t *testing.T) {
 	if _, err := os.Stat(r.Path); !os.IsNotExist(err) || d.kept(group, m.ID) {
 		t.Fatal("not forgotten on the second run")
 	}
+}
+
+// TestSendIDReplay: a send names its id; the same id again answers already_sent with the recorded
+// result and sends nothing; a pending one is OUTCOME_UNKNOWN naming the id; a failed one can be sent
+// again; a malformed id, or one used by another message, is refused.
+func TestSendIDReplay(t *testing.T) {
+	d, _ := keptGroup(t)
+	const id = "3EB0C0FFEE0000000000AB"
+	s := d.send(map[string]any{"chat": group, "text": "once", "id": id})
+	if s.ID != id || s.AlreadySent {
+		t.Fatalf("first: %+v", s)
+	}
+	again := d.send(map[string]any{"chat": group, "text": "once", "id": id})
+	if again.ID != id || !again.AlreadySent || again.Chat != group || again.T != s.T {
+		t.Fatalf("replay: %+v", again)
+	}
+	if n := len(d.fake.Sent()); n != 1 {
+		t.Fatalf("sent %d times", n)
+	}
+	d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "x", "id": "not-an-id"}, 400, "VALIDATION_ERROR")
+
+	// A failed send can be made again under its id.
+	d.fake.SetSendErr(fmt.Errorf("refused"))
+	const failed = "3EB0C0FFEE0000000000AC"
+	d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "retry me", "id": failed}, 502, "UPSTREAM_ERROR")
+	d.fake.SetSendErr(nil)
+	if r := d.send(map[string]any{"chat": group, "text": "retry me", "id": failed}); r.ID != failed || r.AlreadySent {
+		t.Fatalf("resend: %+v", r)
+	}
+
+	// An unknown outcome names the id, and a replay of a pending send is still unknown.
+	d.fake.SetSendErr(fmt.Errorf("%w: timed out", client.ErrOutcomeUnknown))
+	const unsure = "3EB0C0FFEE0000000000AD"
+	e := d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "unsure", "id": unsure}, 504, "OUTCOME_UNKNOWN")
+	if e["id"] != unsure {
+		t.Fatalf("outcome unknown without its id: %v", e)
+	}
+	d.fake.SetSendErr(nil)
+	if e := d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "unsure", "id": unsure}, 504, "OUTCOME_UNKNOWN"); e["id"] != unsure {
+		t.Fatalf("%v", e)
+	}
+}
+
+// TestEventsSince: since keeps events kept at or after an instant, and total counts them.
+func TestEventsSince(t *testing.T) {
+	d, _ := keptGroup(t)
+	total := func(q string) float64 {
+		t.Helper()
+		code, out := d.do("GET", "/v1/events"+q, nil)
+		if code != 200 {
+			t.Fatalf("%s: %d %s", q, code, out)
+		}
+		var v map[string]any
+		json.Unmarshal(out, &v)
+		return v["total"].(float64)
+	}
+	if all, since := total("?limit=1"), total("?limit=1&since=2000-01-01T00:00:00Z"); all == 0 || since != all {
+		t.Fatalf("all %v, since the past %v", all, since)
+	}
+	if n := total("?limit=1&since=2100-01-01T00:00:00Z"); n != 0 {
+		t.Fatalf("since the future: %v", n)
+	}
+	d.wantError("GET", "/v1/events?since=yesterday", nil, 400, "VALIDATION_ERROR")
 }

@@ -122,12 +122,12 @@ func TestReadReceiptsOnRead(t *testing.T) {
 	}
 
 	// Request errors.
-	d.wantError("POST", "/v1/mark-read", map[string]any{"chat": group, "id": m1.ID, "through": m1.ID}, 400, "bad_request")
-	d.wantError("POST", "/v1/mark-read", map[string]any{"chat": group}, 400, "bad_request")
-	d.wantError("POST", "/v1/mark-read", map[string]any{"through": m1.ID}, 400, "bad_request")
-	d.wantError("POST", "/v1/mark-read", map[string]any{"chat": group, "id": m1.ID, "extra": 1}, 400, "bad_request")
-	d.wantError("POST", "/v1/mark-read", map[string]any{"chat": group, "id": "3EB0FFFFFFFFFFFFFF"}, 404, "not_found")
-	d.wantError("GET", "/v1/events?mark_read=yes", nil, 400, "bad_request")
+	d.wantError("POST", "/v1/mark-read", map[string]any{"chat": group, "id": m1.ID, "through": m1.ID}, 400, "VALIDATION_ERROR")
+	d.wantError("POST", "/v1/mark-read", map[string]any{"chat": group}, 400, "VALIDATION_ERROR")
+	d.wantError("POST", "/v1/mark-read", map[string]any{"through": m1.ID}, 400, "VALIDATION_ERROR")
+	d.wantError("POST", "/v1/mark-read", map[string]any{"chat": group, "id": m1.ID, "extra": 1}, 400, "VALIDATION_ERROR")
+	d.wantError("POST", "/v1/mark-read", map[string]any{"chat": group, "id": "3EB0FFFFFFFFFFFFFF"}, 404, "NOT_FOUND")
+	d.wantError("GET", "/v1/events?mark_read=yes", nil, 400, "VALIDATION_ERROR")
 }
 
 func TestReadReceiptsOnKeepAndOff(t *testing.T) {
@@ -228,7 +228,7 @@ func TestMarkReadPartialAndFollow(t *testing.T) {
 		case l := <-lines:
 			if raw, ok := l["error"]; ok {
 				var mf core.MarkFailed
-				if err := json.Unmarshal(raw, &mf); err != nil || mf.Code != "mark_failed" || mf.Failed != 1 || mf.Reason != "whatsapp_error" {
+				if err := json.Unmarshal(raw, &mf); err != nil || mf.Code != "MARK_FAILED" || mf.Failed != 1 || mf.Reason != "whatsapp_error" {
 					t.Fatalf("error line %s", raw)
 				}
 				sawErr = true
@@ -313,14 +313,14 @@ func TestTyping(t *testing.T) {
 	typing(true)
 	n := len(d.fake.Typing())
 	d.fake.SetTypingErr(fmt.Errorf("refused"))
-	d.wantError("POST", "/v1/typing", map[string]any{"chat": group, "on": false}, 502, "whatsapp_error")
+	d.wantError("POST", "/v1/typing", map[string]any{"chat": group, "on": false}, 502, "UPSTREAM_ERROR")
 	d.fake.SetTypingErr(nil)
 	if r := typing(false); !r.Changed {
 		t.Fatal("the retried stop was a no-op")
 	}
 	want(n+1, false)
 
-	d.wantError("POST", "/v1/typing", map[string]any{"chat": group}, 400, "bad_request")
+	d.wantError("POST", "/v1/typing", map[string]any{"chat": group}, 400, "VALIDATION_ERROR")
 	d.fake.Emit(client.StateChange{State: "connecting"})
-	d.wantError("POST", "/v1/typing", map[string]any{"chat": group, "on": true}, 409, "not_connected")
+	d.wantError("POST", "/v1/typing", map[string]any{"chat": group, "on": true}, 409, "NOT_CONNECTED")
 }

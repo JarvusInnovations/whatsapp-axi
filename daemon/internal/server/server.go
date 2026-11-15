@@ -54,7 +54,7 @@ func New(acct *core.Account, log *slog.Logger) *Server {
 	return s
 }
 
-// ServeHTTP routes a request; anything unknown is a bad_request.
+// ServeHTTP routes a request; anything unknown is a VALIDATION_ERROR.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if _, pattern := s.mux.Handler(r); pattern == "" {
 		writeError(w, core.BadRequest("Unknown request %s %s.", r.Method, r.URL.Path))
@@ -121,7 +121,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	b, err := json.Marshal(v)
 	if err != nil {
-		b = []byte(`{"error":{"code":"internal","message":"Internal error in the daemon; see its log."}}`)
+		b = []byte(`{"error":{"code":"INTERNAL_ERROR","message":"Internal error in the daemon; see its log."}}`)
 	}
 	w.Write(append(b, '\n'))
 }
@@ -385,7 +385,7 @@ func (s *Server) forget(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
-	q, err := query(r, "after", "limit", "chat", "kind", "follow", "mark_read")
+	q, err := query(r, "after", "since", "limit", "chat", "kind", "follow", "mark_read")
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -399,6 +399,15 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		eq.After = &n
+	}
+	if v := q.Get("since"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			s.fail(w, core.BadRequest("since must be an RFC 3339 time, such as 2030-01-05T14:00:00Z."))
+			return
+		}
+		ms := t.UnixMilli()
+		eq.Since = &ms
 	}
 	if eq.Limit, err = intParam(q, "limit", 100, 1, 1000); err != nil {
 		s.fail(w, err)

@@ -41,7 +41,7 @@ describe.skipIf(!ready)("end to end with the real daemon", () => {
   it("account add, daemon run, scope set, operators add, events", async () => {
     let r = await run(["account", "add", "demo"]);
     expect(r.code, r.out).toBe(0);
-    expect(r.out).toContain("created: true");
+    expect(r.out).toContain("action: created");
 
     let out = "";
     child = spawn(process.execPath, [cliBin, "daemon", "run", "demo"], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
@@ -54,15 +54,23 @@ describe.skipIf(!ready)("end to end with the real daemon", () => {
 
     r = await run(["scope", "set", "dm-only"]);
     expect(r.code, r.out).toBe(0);
-    expect(r.out).toContain("scope: dm-only (set)");
+    expect(r.out).toContain("action: set");
+    expect(r.out).toContain("scope: dm-only");
     r = await run(["scope", "set", "dm-only"]);
     expect(r.out).toContain("no-op");
     r = await run(["scope", "set", "--chat", "120363000000000001@g.us", "tagged"]);
     expect(r.code, r.out).toBe(0);
 
     r = await run(["operators", "add", "+15550100001"]);
+    expect(r.code, r.out).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
+    r = await run(["operators", "add", "+15550100001", "--confirm"]);
     expect(r.code, r.out).toBe(0);
-    expect(r.out).toContain("added");
+    expect(r.out).toContain("action: added");
+    // The daemon enforces the gate itself: raising retain_days without confirm is refused there.
+    r = await run(["settings", "set", "retain_days", "120"]);
+    expect(r.code, r.out).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
     r = await run(["operators", "list"]);
     expect(r.out).toContain("+15550100001");
 
@@ -72,7 +80,7 @@ describe.skipIf(!ready)("end to end with the real daemon", () => {
 
     r = await run(["events", "--after", "0"]);
     expect(r.code, r.out).toBe(0);
-    expect(r.out).toContain("1,state,null,unlinked (no session)");
+    expect(r.out).toContain('1,state,"-",unlinked (no session)');
     expect(r.out.trim().split("\n").pop()).toBe("last_seq: 1");
     r = await run(["events", "--after", "1"]);
     expect(r.out).toContain("0 events after seq 1");
@@ -81,10 +89,10 @@ describe.skipIf(!ready)("end to end with the real daemon", () => {
     expect(r.out).toContain("0 chats with kept content");
     r = await run(["read", "120363000000000001@g.us"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: not_found");
+    expect(r.out).toContain("code: NOT_FOUND");
 
     r = await run(["settings", "set", "retain_days", "30"]);
-    expect(r.out).toContain("retain_days: 30 (set)");
+    expect(r.out).toContain("retain_days: 30");
 
     r = await run(["doctor"]);
     expect(r.out).toContain("demo,daemon,ok");
@@ -95,17 +103,17 @@ describe.skipIf(!ready)("end to end with the real daemon", () => {
     second.stdout?.on("data", (c: Buffer) => (secondOut += c.toString()));
     const code = await new Promise<number | null>((res) => second.once("close", res));
     expect(code).toBe(1);
-    expect(secondOut).toContain("daemon_exited");
+    expect(secondOut).toContain("DAEMON_EXITED");
 
     // account remove refuses while the daemon runs.
     r = await run(["account", "remove", "demo", "--confirm", "demo"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("daemon_running");
+    expect(r.out).toContain("DAEMON_RUNNING");
 
     child.kill("SIGTERM");
     const exit = await new Promise<number | null>((res) => child?.once("close", res));
     expect(exit).toBe(0);
-    expect(out).toContain("daemon: demo stopped");
+    expect(out).toContain("action: stopped");
 
     // Settings survived the restart-free stop, and the daemon being down is reported as such.
     r = await run(["scope", "show"]);

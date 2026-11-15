@@ -185,7 +185,7 @@ type MarkFailed struct {
 
 // MarkFailedLine describes a mark that sent fewer receipts than asked.
 func MarkFailedLine(m MarkOutcome) MarkFailed {
-	return MarkFailed{Code: "mark_failed", Message: fmt.Sprintf("%d of the returned messages were not marked read (%s).", m.Failed, m.Reason), MarkOutcome: m}
+	return MarkFailed{Code: "MARK_FAILED", Message: fmt.Sprintf("%d of the returned messages were not marked read (%s).", m.Failed, m.Reason), MarkOutcome: m}
 }
 
 // EventRefs are the incoming messages among events.
