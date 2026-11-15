@@ -17,6 +17,12 @@ type MarkReadCall struct {
 	IDs          []string
 }
 
+// TypingCall records one SendTyping.
+type TypingCall struct {
+	Chat string
+	On   bool
+}
+
 // Client is the fake.
 type Client struct {
 	mu       sync.Mutex
@@ -29,6 +35,7 @@ type Client struct {
 	groups   map[string]client.GroupInfo
 
 	MarkReads []MarkReadCall
+	typing    []TypingCall
 	Requested []string // ids passed to RequestMapping
 	Closed    bool
 	Presences int // SendPresence calls
@@ -209,8 +216,35 @@ func (c *Client) GroupInfo(_ context.Context, chat string) (client.GroupInfo, er
 func (c *Client) MarkRead(_ context.Context, chat, sender string, ids []string, _ time.Time) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.state != "connected" {
+		return client.ErrNotConnected
+	}
 	c.MarkReads = append(c.MarkReads, MarkReadCall{Chat: chat, Sender: sender, IDs: append([]string(nil), ids...)})
 	return nil
+}
+
+func (c *Client) SendTyping(_ context.Context, chat string, on bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state != "connected" {
+		return client.ErrNotConnected
+	}
+	c.typing = append(c.typing, TypingCall{Chat: chat, On: on})
+	return nil
+}
+
+// Typing returns the SendTyping calls so far.
+func (c *Client) Typing() []TypingCall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]TypingCall(nil), c.typing...)
+}
+
+// MarkReadCalls returns the MarkRead calls so far.
+func (c *Client) MarkReadCalls() []MarkReadCall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]MarkReadCall(nil), c.MarkReads...)
 }
 
 func (c *Client) SendPresence(context.Context) error {

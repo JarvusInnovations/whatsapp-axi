@@ -86,6 +86,12 @@ CREATE TABLE events (
 CREATE INDEX events_chat ON events(chat_id, seq);
 CREATE INDEX events_message ON events(chat_id, message_id);
 `,
+	// read_marked records that a read receipt was sent for a message, so marking is idempotent.
+	// Every message kept before it was kept under read_receipts on-keep, which marked it then.
+	`
+ALTER TABLE messages ADD COLUMN read_marked INTEGER NOT NULL DEFAULT 0;
+UPDATE messages SET read_marked=1;
+`,
 }
 
 // Open opens store.db with secure deletion on and applies migrations.

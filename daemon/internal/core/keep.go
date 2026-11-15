@@ -494,7 +494,7 @@ func (a *Account) keep(ctx context.Context, m *client.Message, chatID string, se
 		return err
 	}
 	a.afterCommit(ctx, events)
-	a.markRead(ctx, m, reads)
+	a.markOnKeep(ctx, reads)
 	return nil
 }
 
@@ -577,21 +577,6 @@ func (a *Account) afterCommit(_ context.Context, events []pending) {
 		if err != nil {
 			a.log.Warn("cannot append to the wake file", "err", err)
 			return
-		}
-	}
-}
-
-// markRead sends read receipts for newly kept messages from others when read_receipts is on-keep.
-func (a *Account) markRead(ctx context.Context, m *client.Message, rows []row) {
-	if a.settings.ReadReceipts != "on-keep" {
-		return
-	}
-	for _, r := range rows {
-		if r.fromMe {
-			continue
-		}
-		if err := a.client.MarkRead(ctx, m.Chat, r.senderRaw, []string{r.id}, r.t); err != nil && !errors.Is(err, client.ErrNotConnected) {
-			a.log.Warn("marking a kept message read failed", "err", err)
 		}
 	}
 }

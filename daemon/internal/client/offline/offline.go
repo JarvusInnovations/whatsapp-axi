@@ -37,7 +37,10 @@ func (c *Client) GroupInfo(context.Context, string) (client.GroupInfo, error) {
 	return client.GroupInfo{}, client.ErrNotConnected
 }
 func (c *Client) SendPresence(context.Context) error { return client.ErrNotConnected }
-func (c *Client) Logout(context.Context) error       { return client.ErrNotConnected }
+func (c *Client) SendTyping(context.Context, string, bool) error {
+	return client.ErrNotConnected
+}
+func (c *Client) Logout(context.Context) error { return client.ErrNotConnected }
 func (c *Client) Link(context.Context, client.LinkRequest, func(client.LinkProgress)) error {
 	return client.ErrNotConnected
 }

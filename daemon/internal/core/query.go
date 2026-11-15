@@ -423,6 +423,8 @@ type MessagesPage struct {
 	Chat     ChatRef       `json:"chat"`
 	Messages []MessageView `json:"messages"`
 	More     bool          `json:"more"`
+	// MarkedRead is how many returned messages a mark_read request marked now.
+	MarkedRead *int `json:"marked_read,omitempty"`
 }
 
 // Messages returns kept messages of a chat, newest last, before an optional message id.

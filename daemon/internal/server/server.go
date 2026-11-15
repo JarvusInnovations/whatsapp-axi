@@ -42,6 +42,8 @@ func New(acct *core.Account, log *slog.Logger) *Server {
 	s.mux.HandleFunc("GET /v1/messages/{id}", s.message)
 	s.mux.HandleFunc("GET /v1/messages/{chat}/{id}", s.message)
 	s.mux.HandleFunc("POST /v1/forget", s.forget)
+	s.mux.HandleFunc("POST /v1/mark-read", s.markRead)
+	s.mux.HandleFunc("POST /v1/typing", s.typing)
 	s.mux.HandleFunc("POST /v1/link", s.link)
 	s.mux.HandleFunc("POST /v1/logout", s.logout)
 	s.mux.HandleFunc("POST /v1/send", s.send)
@@ -202,6 +204,17 @@ func intParam(q url.Values, name string, def, min, max int) (int, error) {
 	return n, nil
 }
 
+// boolParam reads a 1/0 query parameter; absent is false.
+func boolParam(q url.Values, name string) (bool, error) {
+	switch q.Get(name) {
+	case "", "0", "false":
+		return false, nil
+	case "1", "true":
+		return true, nil
+	}
+	return false, core.BadRequest("%s must be 1 or 0.", name)
+}
+
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	if _, err := query(r); err != nil {
 		s.fail(w, err)
@@ -268,7 +281,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
-	q, err := query(r, "chat", "before", "limit")
+	q, err := query(r, "chat", "before", "limit", "mark_read")
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -282,10 +295,19 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	mark, err := boolParam(q, "mark_read")
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	page, err := s.acct.Messages(r.Context(), q.Get("chat"), q.Get("before"), limit)
 	if err != nil {
 		s.fail(w, err)
 		return
+	}
+	if mark {
+		n := s.acct.MarkReturned(r.Context(), core.PageRefs(page))
+		page.MarkedRead = &n
 	}
 	writeJSON(w, http.StatusOK, page)
 }
@@ -338,7 +360,7 @@ func (s *Server) forget(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
-	q, err := query(r, "after", "limit", "chat", "kind", "follow")
+	q, err := query(r, "after", "limit", "chat", "kind", "follow", "mark_read")
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -376,13 +398,14 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		}
 		eq.Chat = id
 	}
-	follow := false
-	switch q.Get("follow") {
-	case "", "0", "false":
-	case "1", "true":
-		follow = true
-	default:
-		s.fail(w, core.BadRequest("follow must be 1 or 0."))
+	follow, err := boolParam(q, "follow")
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	mark, err := boolParam(q, "mark_read")
+	if err != nil {
+		s.fail(w, err)
 		return
 	}
 
@@ -398,6 +421,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		res := map[string]any{"events": list, "latest_seq": last}
+		if mark {
+			res["marked_read"] = s.acct.MarkReturned(ctx, core.EventRefs(list))
+		}
 		if eq.After != nil {
 			res["after"] = *eq.After
 		}
@@ -440,6 +466,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			cursor = e.Seq
+		}
+		if mark {
+			s.acct.MarkReturned(ctx, core.EventRefs(list))
 		}
 		if flusher != nil {
 			flusher.Flush()
@@ -535,6 +564,14 @@ func (s *Server) sendFile(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) react(w http.ResponseWriter, r *http.Request) {
 	post(s, w, r, s.acct.React)
+}
+
+func (s *Server) markRead(w http.ResponseWriter, r *http.Request) {
+	post(s, w, r, s.acct.MarkRead)
+}
+
+func (s *Server) typing(w http.ResponseWriter, r *http.Request) {
+	post(s, w, r, s.acct.Typing)
 }
 
 func (s *Server) download(w http.ResponseWriter, r *http.Request) {

@@ -236,6 +236,8 @@ type Client interface {
 	GroupInfo(ctx context.Context, chat string) (GroupInfo, error)
 	// MarkRead sends a read receipt for messages of one sender in one chat.
 	MarkRead(ctx context.Context, chat, sender string, ids []string, t time.Time) error
+	// SendTyping turns the typing indicator on or off in a chat.
+	SendTyping(ctx context.Context, chat string, on bool) error
 	// SendPresence announces the account as available (specs/daemon.md "Presence").
 	SendPresence(ctx context.Context) error
 

@@ -380,6 +380,12 @@ func (a *Account) dispatch(ctx context.Context, o *outgoing) (*SentMessage, erro
 
 	res, sendErr := a.client.Send(ctx, o.msg)
 
+	// A send to the chat ends the account's typing there; this runs after a.mu is released.
+	defer func() {
+		if sendErr == nil {
+			a.clearTyping(o.t.chat)
+		}
+	}()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if sendErr != nil {

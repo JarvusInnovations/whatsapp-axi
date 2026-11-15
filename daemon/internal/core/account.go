@@ -63,6 +63,8 @@ type Account struct {
 	presPending bool
 	presNoted   bool
 
+	typing typing
+
 	// sendMu makes sends and reactions reach the client strictly one after another.
 	sendMu sync.Mutex
 	limits *limiter

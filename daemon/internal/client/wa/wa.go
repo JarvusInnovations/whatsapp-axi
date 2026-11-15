@@ -412,6 +412,22 @@ func (c *Client) MarkRead(ctx context.Context, chat, sender string, ids []string
 	return wa.MarkRead(ctx, mids, t, cj, sj)
 }
 
+func (c *Client) SendTyping(ctx context.Context, chat string, on bool) error {
+	wa, err := c.connected()
+	if err != nil {
+		return err
+	}
+	j, err := types.ParseJID(chat)
+	if err != nil {
+		return err
+	}
+	state := types.ChatPresencePaused
+	if on {
+		state = types.ChatPresenceComposing
+	}
+	return wa.SendChatPresence(ctx, j.ToNonAD(), state, "")
+}
+
 func (c *Client) SendPresence(ctx context.Context) error {
 	wa, err := c.connected()
 	if err != nil {
