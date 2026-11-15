@@ -40,11 +40,12 @@ All paths are per Unix user. `<config>` is `$XDG_CONFIG_HOME/whatsapp-axi` (defa
 
 | Path | Holds | Mode |
 | --- | --- | --- |
-| `<config>/<account>/settings.json` | scope, per-chat overrides, operators, limits, wake file path | 0600 |
-| `<state>/<account>/session.db` | the library's session store: keys and encryption state. **This file is the account** | 0600 |
-| `<state>/<account>/store.db` | the daemon's own store: kept messages, the account's own sent messages, chats, counters, the event sequence | 0600 |
-| `<state>/<account>/media/` | media files fetched on request | 0700 dir, 0600 files |
-| `<state>/<account>/daemon.lock` | single-instance lock | 0600 |
+| `<config>/accounts/<account>/settings.json` | scope, per-chat overrides, operators, limits, wake file path | 0600 |
+| `<state>/accounts/<account>/session.db` | the library's session store: keys and encryption state. **This file is the account** | 0600 |
+| `<state>/accounts/<account>/store.db` | the daemon's own store: kept messages, the account's own sent messages, chats, counters, the event sequence | 0600 |
+| `<state>/accounts/<account>/media/` | media files fetched on request | 0700 dir, 0600 files |
+| `<state>/accounts/<account>/daemon.lock` | single-instance lock | 0600 |
+| `<config>/config.json` | the default account ([conventions.md](conventions.md)) | 0600 |
 | `<runtime>/<account>.sock` | the daemon's socket (see [socket-protocol.md](socket-protocol.md)) | 0600 in a 0700 dir |
 | `<data>/bin/whatsapp-axid` | the installed daemon binary that service units run | 0755 |
 

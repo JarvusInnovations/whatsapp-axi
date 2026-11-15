@@ -116,11 +116,17 @@ the caller's own arguments.
   pin is set.
 - `auth logout` and `account remove` always take an explicit account once there are several.
 
-**Storage** keeps the layout in [architecture.md](architecture.md): one directory per account
-under the config and state roots, with `<config>/config.json` added for the default. The
-config root is `WHATSAPP_AXI_CONFIG_DIR` when set. This differs from the house layout's
-`accounts/` subdirectory because the daemon owns each account's directory whole and checks its
-modes as one unit.
+**Storage** is the house layout ([architecture.md](architecture.md)): `<config>/config.json`
+for the default, and one directory per account at `<config>/accounts/<name>/` and
+`<state>/accounts/<name>/`. Settings are under the config root; the session, the store and
+media are under the state root, since they are databases and files the daemon owns. The config
+root is `WHATSAPP_AXI_CONFIG_DIR` when set. The `accounts/` level means an account's name can
+never collide with one of the tool's own files.
+
+**Moving an existing account.** A daemon or CLI that finds an account directory directly under
+a root, where it stood before this layout, moves nothing by itself: `doctor` reports it as
+`fail` with the one command that moves it, `account migrate`, which stops nothing, refuses
+while that account's daemon runs, moves both directories, and prints what it moved.
 
 **Environment variables**, the whole set: `WHATSAPP_AXI_ACCOUNT` (the pin),
 `WHATSAPP_AXI_CONFIG_DIR`, `WHATSAPP_AXI_TIMEOUT_MS`, `WHATSAPP_AXI_DAEMON` (the daemon binary
