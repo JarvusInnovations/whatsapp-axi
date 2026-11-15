@@ -154,9 +154,15 @@ reacting with the same emoji again succeeds as a no-op and says so.
 
 ## Agent integrations
 
-- **`hook install`, `hook uninstall`, `hook status`** manage a session-start hook for Claude
-  Code, Codex and OpenCode, at project scope by default and user scope with `--global`.
-  Installing is explicit and idempotent, and repairs a hook whose executable path has moved.
+- **`setup hooks`** installs or repairs a session-start hook for Claude Code, Codex and
+  OpenCode. It is the only code path that writes a hook, it is idempotent, and it repairs a
+  hook whose executable path has moved. `setup hooks status` reports what is installed and
+  `setup hooks uninstall` removes it. This is the shape the family's reference tools use.
+  - `--scope user|project` chooses where the hook lives (default `user`). For `project`, the
+    target is `--dir <path>` when given, else the git root of the working directory, else an
+    error; never the bare working directory.
+  - Any error from writing a hook is a failure (exit 1), and status is read again after an
+    install and printed, so "installed" is what was verified.
 - **The hook is scoped to the project.** Accounts belong to a user, not a directory, so a
   project names the accounts it uses in `.whatsapp-axi.json` at its root
   (`{"accounts": ["example"]}`). The hook prints those accounts and nothing else, and in a
