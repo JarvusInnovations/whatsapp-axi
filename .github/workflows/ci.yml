@@ -75,6 +75,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: The skill is current with the command reference
+        run: npm run build:skill -- --check
+
       - uses: actions/setup-go@v7
         with:
           go-version-file: .tool-versions
