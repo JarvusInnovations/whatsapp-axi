@@ -101,7 +101,13 @@ describe("chat view", () => {
       return {
         body: {
           chat: {
-            id: GROUP, name: "Example group", type: "group", scope: "tagged", last_kept: null, discarded: 1, messages: 1,
+            id: GROUP,
+            name: "Example group",
+            type: "group",
+            scope: "tagged",
+            last_kept: null,
+            discarded: 1,
+            messages: 1,
             participants: [
               { id: "100000000000000@lid", name: "", me: true, operator: false, contact: false },
               { ...SAM, contact: true },
@@ -114,10 +120,10 @@ describe("chat view", () => {
     const r = await run(["chat", "view", GROUP]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("participants[3]{id,name,marks}:");
-    expect(r.out).toContain("100000000000000@lid,\"-\",me");
+    expect(r.out).toContain('100000000000000@lid,"-",me');
     expect(r.out).not.toContain("null");
     expect(r.out).toContain("100000000000001@lid,Sam,operator contact");
-    expect(r.out).toContain("100000000000002@lid,Alex,\"-\"");
+    expect(r.out).toContain('100000000000002@lid,Alex,"-"');
   });
 
   it("passes daemon errors through with a help line", async () => {
@@ -131,7 +137,7 @@ describe("chat view", () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain("code: NOT_CONNECTED");
     expect(r.out).toContain("whatsapp-axi doctor");
-    fake.route("GET /v1/chats/*", () => apiError(400, "VALIDATION_ERROR", "\"x\" is not a chat"));
+    fake.route("GET /v1/chats/*", () => apiError(400, "VALIDATION_ERROR", '"x" is not a chat'));
     r = await run(["chat", "view", "x"]);
     expect(r.code).toBe(2);
     expect(r.out).toContain("code: VALIDATION_ERROR");
@@ -142,7 +148,16 @@ describe("events", () => {
   const events = [
     { seq: 411, t: "2030-01-05T14:00:00Z", kind: "state", account: "example", state: "connected", reason: "" },
     { seq: 412, t: "2030-01-05T14:03:11Z", kind: "message", account: "example", chat: { id: GROUP, type: "group", name: "Example group" }, message: MESSAGE },
-    { seq: 413, t: "2030-01-05T14:04:00Z", kind: "reaction", account: "example", chat: { id: GROUP, type: "group", name: "x" }, target: MESSAGE.id, from: ALEX, emoji: "👍" },
+    {
+      seq: 413,
+      t: "2030-01-05T14:04:00Z",
+      kind: "reaction",
+      account: "example",
+      chat: { id: GROUP, type: "group", name: "x" },
+      target: MESSAGE.id,
+      from: ALEX,
+      emoji: "👍",
+    },
   ];
 
   it("reads after a seq and ends with the highest seq", async () => {
@@ -222,7 +237,9 @@ describe("events", () => {
     expect(r.out.trim().split("\n").pop()).toBe("last_seq: 413");
     fake.route("GET /v1/messages", ({ query }) => {
       expect(query.get("mark_read")).toBe("1");
-      return { body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [MESSAGE], more: false, mark_read: { marked: 1, already_marked: 0, failed: 0 } } };
+      return {
+        body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [MESSAGE], more: false, mark_read: { marked: 1, already_marked: 0, failed: 0 } },
+      };
     });
     const r2 = await run(["read", GROUP, "--mark-read"]);
     expect(r2.code).toBe(0);
@@ -230,14 +247,23 @@ describe("events", () => {
   });
 
   it("prints what it read and exits 1 with the fix when a mark was not sent", async () => {
-    fake.route("GET /v1/events", () => ({ body: { events, latest_seq: 413, after: 410, mark_read: { marked: 0, already_marked: 0, failed: 2, reason: "off" } } }));
+    fake.route("GET /v1/events", () => ({
+      body: { events, latest_seq: 413, after: 410, mark_read: { marked: 0, already_marked: 0, failed: 2, reason: "off" } },
+    }));
     const r = await run(["events", "--after", "410", "--mark-read"]);
     expect(r.code, r.out).toBe(1);
     expect(r.out).toContain("412,message");
     expect(r.out).toContain("failed: 2");
     expect(r.out).toContain("reason: off");
     expect(r.out).toContain("settings set read_receipts on-read");
-    fake.route("GET /v1/messages", () => ({ body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [MESSAGE], more: false, mark_read: { marked: 0, already_marked: 0, failed: 1, reason: "not_connected" } } }));
+    fake.route("GET /v1/messages", () => ({
+      body: {
+        chat: { id: GROUP, type: "group", name: "x" },
+        messages: [MESSAGE],
+        more: false,
+        mark_read: { marked: 0, already_marked: 0, failed: 1, reason: "not_connected" },
+      },
+    }));
     const r2 = await run(["read", GROUP, "--mark-read"]);
     expect(r2.code, r2.out).toBe(1);
     expect(r2.out).toContain(MESSAGE.id);
@@ -246,16 +272,27 @@ describe("events", () => {
   });
 
   it("follow says a failed mark on its own line, keeps streaming, and exits 1", async () => {
-    fake.route("GET /v1/events", () => ({ lines: [events[0], { error: { code: "MARK_FAILED", message: "1 not marked", marked: 0, already_marked: 0, failed: 1, reason: "whatsapp_error" } }, events[1]] }));
+    fake.route("GET /v1/events", () => ({
+      lines: [
+        events[0],
+        { error: { code: "MARK_FAILED", message: "1 not marked", marked: 0, already_marked: 0, failed: 1, reason: "whatsapp_error" } },
+        events[1],
+      ],
+    }));
     const ac = new AbortController();
     const { events: eventsCmd } = await import("../src/commands/read.js");
     const { testCtx } = await import("./helpers.js");
     const lines: string[] = [];
     process.exitCode = undefined;
-    const done = eventsCmd(testCtx(), ["--after", "410", "--follow", "--mark-read"], (s) => {
-      lines.push(s);
-      if (lines.length === 3) ac.abort();
-    }, ac.signal);
+    const done = eventsCmd(
+      testCtx(),
+      ["--after", "410", "--follow", "--mark-read"],
+      (s) => {
+        lines.push(s);
+        if (lines.length === 3) ac.abort();
+      },
+      ac.signal,
+    );
     const result = (await done) as { last_seq: number; help?: string[] };
     expect(lines[1]).toContain("code: MARK_FAILED");
     expect(lines[1]).toContain("reason: whatsapp_error");
@@ -281,10 +318,15 @@ describe("events", () => {
     const { events: eventsCmd } = await import("../src/commands/read.js");
     const { testCtx } = await import("./helpers.js");
     const lines: string[] = [];
-    const done = eventsCmd(testCtx(), ["--after", "410", "--follow"], (s) => {
-      lines.push(s);
-      if (lines.length === 3) ac.abort();
-    }, ac.signal);
+    const done = eventsCmd(
+      testCtx(),
+      ["--after", "410", "--follow"],
+      (s) => {
+        lines.push(s);
+        if (lines.length === 3) ac.abort();
+      },
+      ac.signal,
+    );
     const result = (await done) as { last_seq: number };
     expect(lines).toHaveLength(3);
     expect(lines[1]).toContain("412,message");
@@ -343,7 +385,9 @@ describe("groups", () => {
     let r = await run(["groups"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("0 groups");
-    fake.route("GET /v1/groups", () => apiError(409, "NOT_CONNECTED", "Listing groups needs a live connection to WhatsApp; the account is connecting.", { state: "connecting" }));
+    fake.route("GET /v1/groups", () =>
+      apiError(409, "NOT_CONNECTED", "Listing groups needs a live connection to WhatsApp; the account is connecting.", { state: "connecting" }),
+    );
     r = await run(["groups"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("code: NOT_CONNECTED");
@@ -354,7 +398,13 @@ describe("read and message view", () => {
   it("reads a chat oldest first", async () => {
     fake.route("GET /v1/messages", ({ query }) => {
       expect(query.get("chat")).toBe(GROUP);
-      return { body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [MESSAGE, { ...MESSAGE, id: "3EB0AAAA0000000002", text: "", deleted: true }], more: true } };
+      return {
+        body: {
+          chat: { id: GROUP, type: "group", name: "x" },
+          messages: [MESSAGE, { ...MESSAGE, id: "3EB0AAAA0000000002", text: "", deleted: true }],
+          more: true,
+        },
+      };
     });
     const r = await run(["read", GROUP]);
     expect(r.code).toBe(0);
@@ -409,7 +459,11 @@ describe("read and message view", () => {
     fake.route("GET /v1/messages/*", () => ({ body: { chat: { id: GROUP, type: "group", name: "x" }, message: leaky } }));
     fake.route("GET /v1/messages", () => ({ body: { chat: { id: GROUP, type: "group", name: "x" }, messages: [leaky], more: false } }));
     fake.route("GET /v1/events", () => ({ body: { events: [{ seq: 1, kind: "message", t: "x", chat: { id: GROUP }, message: leaky }], latest_seq: 1 } }));
-    for (const argv of [["message", "view", MESSAGE.id], ["read", GROUP, "--fields", "media,reply_to"], ["events", "--fields", "t,id,from,kept_by,mentions_me"]]) {
+    for (const argv of [
+      ["message", "view", MESSAGE.id],
+      ["read", GROUP, "--fields", "media,reply_to"],
+      ["events", "--fields", "t,id,from,kept_by,mentions_me"],
+    ]) {
       const r = await run(argv);
       expect(r.code).toBe(0);
       expect(r.out).not.toContain("SECRET");
@@ -524,7 +578,13 @@ describe("scope, operators and settings", () => {
     r = await run(["settings", "set", "send.first_contact", "allow", "--confirm"]);
     expect(r.code, r.out).toBe(0);
     expect(fake.seen.at(-1)?.body).toEqual({ send: { first_contact: "allow" }, confirm: true });
-    fake.route("PATCH /v1/settings", () => apiError(409, "CONFIRM_REQUIRED", "This change widens what the account reads or loosens a send safeguard (raising send.per_hour from 60 to 120); send it with confirm: true."));
+    fake.route("PATCH /v1/settings", () =>
+      apiError(
+        409,
+        "CONFIRM_REQUIRED",
+        "This change widens what the account reads or loosens a send safeguard (raising send.per_hour from 60 to 120); send it with confirm: true.",
+      ),
+    );
     r = await run(["settings", "set", "send.per_hour", "120"]);
     expect(r.code).toBe(2);
     expect(r.out).toContain("code: CONFIRM_REQUIRED");
@@ -569,7 +629,13 @@ describe("scope, operators and settings", () => {
     expect(fake.seen.at(-1)?.body).toEqual({ send: { per_hour: 20 } });
     r = await run(["settings", "set", "wake_file", "none"]);
     expect(fake.seen.at(-1)?.body).toEqual({ wake_file: null });
-    for (const bad of [["retain_days", "x"], ["presence", "yes"], ["wake_file", "rel/path"], ["scope", "full"], ["colour", "blue"]]) {
+    for (const bad of [
+      ["retain_days", "x"],
+      ["presence", "yes"],
+      ["wake_file", "rel/path"],
+      ["scope", "full"],
+      ["colour", "blue"],
+    ]) {
       r = await run(["settings", "set", ...bad]);
       expect(r.code, bad.join(" ")).toBe(2);
     }
@@ -595,7 +661,7 @@ describe("accounts and the home view", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("accounts[2]{name,state,scope}:");
     expect(r.out).toContain("example,connected,tagged");
-    expect(r.out).toContain("other,\"unavailable (DAEMON_NOT_RUNNING: The daemon of account other is not running.)\",?");
+    expect(r.out).toContain('other,"unavailable (DAEMON_NOT_RUNNING: The daemon of account other is not running.)",?');
     expect(r.out).toContain("count: 2 of 2");
     expect(r.out).not.toContain("null");
     // Not installed as a service: the hint is install, not start.
@@ -614,12 +680,12 @@ describe("accounts and the home view", () => {
     fake.route("GET /v1/settings", () => ({ raw: "garbage" }));
     let r = await run(["accounts"]);
     expect(r.code, r.out).toBe(0);
-    expect(r.out).toContain("example,\"unavailable (UNEXPECTED_RESPONSE:");
+    expect(r.out).toContain('example,"unavailable (UNEXPECTED_RESPONSE:');
     expect(r.out).toContain("whatsapp-axi doctor");
     fake.route("GET /v1/status", () => apiError(500, "INTERNAL_ERROR", "Internal error in the daemon; see its log."));
     r = await run([]);
     expect(r.code, r.out).toBe(0);
-    expect(r.out).toContain("example,\"unavailable (INTERNAL_ERROR: Internal error in the daemon; see its log.)\",?");
+    expect(r.out).toContain('example,"unavailable (INTERNAL_ERROR: Internal error in the daemon; see its log.)",?');
     const { ROW_TIMEOUT } = await import("../src/commands/accounts.js");
     const saved = ROW_TIMEOUT.ms;
     ROW_TIMEOUT.ms = 200;
@@ -630,11 +696,11 @@ describe("accounts and the home view", () => {
       r = await run(["accounts"]);
       expect(r.code, r.out).toBe(0);
       expect(Date.now() - t0).toBeLessThan(2000);
-      expect(r.out).toContain("example,\"unavailable (TIMEOUT:");
-      expect(r.out).toContain("other,\"unavailable (DAEMON_NOT_RUNNING:");
+      expect(r.out).toContain('example,"unavailable (TIMEOUT:');
+      expect(r.out).toContain('other,"unavailable (DAEMON_NOT_RUNNING:');
       r = await run([]);
       expect(r.code).toBe(0);
-      expect(r.out).toContain("example,\"unavailable (TIMEOUT:");
+      expect(r.out).toContain('example,"unavailable (TIMEOUT:');
     } finally {
       ROW_TIMEOUT.ms = saved;
     }
@@ -647,7 +713,7 @@ describe("accounts and the home view", () => {
     writeFileSync(join(units, "whatsapp-axi@.service"), "");
     writeFileSync(join(units, "default.target.wants", "whatsapp-axi@other.service"), "");
     const r = await run([]);
-    expect(r.out).toContain("other,\"unavailable (DAEMON_NOT_RUNNING:");
+    expect(r.out).toContain('other,"unavailable (DAEMON_NOT_RUNNING:');
     expect(r.out).toContain("whatsapp-axi daemon start other");
     expect(r.out.trim().split("\n").pop()).toContain("--help` to see the full command list");
   });
@@ -683,10 +749,12 @@ describe("doctor", () => {
   it("names the fix for a stopped daemon, loose modes and a stale phone", async () => {
     addAccount(env, "other");
     chmodSync(join(env.home, "config", "whatsapp-axi", "accounts", "other", "settings.json"), 0o644);
-    fake.route("GET /v1/status", () => ({ body: { ...STATUS, state: "logged_out", reason: "removed on the phone", last_phone_activity: "2020-01-01T00:00:00Z" } }));
+    fake.route("GET /v1/status", () => ({
+      body: { ...STATUS, state: "logged_out", reason: "removed on the phone", last_phone_activity: "2020-01-01T00:00:00Z" },
+    }));
     const r = await run(["doctor"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("other,daemon,fail,\"DAEMON_NOT_RUNNING:");
+    expect(r.out).toContain('other,daemon,fail,"DAEMON_NOT_RUNNING:');
     expect(r.out).toContain("Run `whatsapp-axi daemon install other` to fix daemon of other");
     expect(r.out).toContain("chmod 600");
     expect(r.out).toContain("other,link,skipped,needs the daemon answering");

@@ -143,7 +143,7 @@ describe("fail closed", () => {
     try {
       let r = await run(["accounts"]);
       expect(r.code, r.out).toBe(0);
-      expect(r.out).toContain("beta,\"unknown (CONFIG_INVALID:");
+      expect(r.out).toContain('beta,"unknown (CONFIG_INVALID:');
       // It counts toward "more than one", so alpha is never "the only one".
       r = await run(["scope", "set", "tagged"]);
       expect(r.code).toBe(2);
@@ -283,7 +283,8 @@ describe("formatError", () => {
     for (const code of ["USAGE", "UNKNOWN_FLAG", "VALIDATION_ERROR", "CONFIRM_REQUIRED", "ACCOUNT_REQUIRED", "ACCOUNT_LOCKED"]) {
       expect(formatError(new AxiError("x", code)).exitCode, code).toBe(2);
     }
-    for (const code of ["NO_ACCOUNT", "TIMEOUT", "ACCOUNT_LOCK_INVALID", "OUTCOME_UNKNOWN"]) expect(formatError(new AxiError("x", code)).exitCode, code).toBe(1);
+    for (const code of ["NO_ACCOUNT", "TIMEOUT", "ACCOUNT_LOCK_INVALID", "OUTCOME_UNKNOWN"])
+      expect(formatError(new AxiError("x", code)).exitCode, code).toBe(1);
   });
 
   it("an unexpected throw is INTERNAL_ERROR with a doctor hint and no stack; an errno code never leaks", () => {

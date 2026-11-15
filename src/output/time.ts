@@ -47,7 +47,11 @@ function fmt(zone: string): Intl.DateTimeFormat {
 export function localTime(iso: string, zone: string): string {
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return iso;
-  const parts = Object.fromEntries(fmt(zone).formatToParts(new Date(ms)).map((p) => [p.type, p.value]));
+  const parts = Object.fromEntries(
+    fmt(zone)
+      .formatToParts(new Date(ms))
+      .map((p) => [p.type, p.value]),
+  );
   const off = (parts.timeZoneName ?? "GMT").replace(/^GMT/, "") || "+00:00";
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${off}`;
 }

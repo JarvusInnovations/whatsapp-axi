@@ -21,7 +21,8 @@ export function accountEntries(r: Roots): AccountEntry[] {
   try {
     return listAccountEntries(r);
   } catch (err) {
-    if (err instanceof ListError) throw failure(`The accounts directory cannot be read: ${err.message}`, "CONFIG_INVALID", [`Run \`${BIN} doctor\` to check the files`]);
+    if (err instanceof ListError)
+      throw failure(`The accounts directory cannot be read: ${err.message}`, "CONFIG_INVALID", [`Run \`${BIN} doctor\` to check the files`]);
     throw err;
   }
 }
@@ -34,7 +35,9 @@ export function readDefault(r: Roots): string | undefined {
     text = readFileSync(path, "utf-8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw failure(`${path} cannot be read: ${(err as NodeJS.ErrnoException).code ?? (err as Error).message}`, "CONFIG_INVALID", [`Run \`${BIN} doctor\` to check the files`]);
+    throw failure(`${path} cannot be read: ${(err as NodeJS.ErrnoException).code ?? (err as Error).message}`, "CONFIG_INVALID", [
+      `Run \`${BIN} doctor\` to check the files`,
+    ]);
   }
   let v: unknown;
   try {
@@ -42,10 +45,12 @@ export function readDefault(r: Roots): string | undefined {
   } catch {
     throw failure(`${path} is not valid JSON; it was left as it is`, "CONFIG_INVALID", [`Fix or delete ${path}, then run \`${BIN} account use <name>\``]);
   }
-  if (!v || typeof v !== "object" || Array.isArray(v)) throw failure(`${path} is not a JSON object; it was left as it is`, "CONFIG_INVALID", [`Fix or delete ${path}`]);
+  if (!v || typeof v !== "object" || Array.isArray(v))
+    throw failure(`${path} is not a JSON object; it was left as it is`, "CONFIG_INVALID", [`Fix or delete ${path}`]);
   const d = (v as Record<string, unknown>).default_account;
   if (d === undefined || d === null) return undefined;
-  if (typeof d !== "string" || !validAccount(d)) throw failure(`${path}: default_account is not an account name; it was left as it is`, "CONFIG_INVALID", [`Fix or delete ${path}`]);
+  if (typeof d !== "string" || !validAccount(d))
+    throw failure(`${path}: default_account is not an account name; it was left as it is`, "CONFIG_INVALID", [`Fix or delete ${path}`]);
   return d;
 }
 
@@ -104,7 +109,9 @@ export interface ResolveInput {
 
 function checkName(name: string, what: string): string {
   if (!validAccount(name)) {
-    throw invalid(`bad account name ${JSON.stringify(name)} in ${what}: names match ^[a-z][a-z0-9-]{0,23}$ and are not "accounts" (a local label, not a phone number)`);
+    throw invalid(
+      `bad account name ${JSON.stringify(name)} in ${what}: names match ^[a-z][a-z0-9-]{0,23}$ and are not "accounts" (a local label, not a phone number)`,
+    );
   }
   return name;
 }
@@ -123,11 +130,15 @@ export function resolveAccount(i: ResolveInput): Resolved {
   if (pin !== undefined) {
     if (!validAccount(pin) || !names.includes(pin)) {
       throw failure(`${PIN_VAR} pins account ${JSON.stringify(pin)}, which does not exist; nothing falls back to another account`, "ACCOUNT_LOCK_INVALID", [
-        names.length ? `Accounts: ${names.join(", ")}; set ${PIN_VAR} to one of them, or unset it` : `There are no accounts; unset ${PIN_VAR}, or run \`${BIN} account add ${validAccount(pin) ? pin : "<name>"}\``,
+        names.length
+          ? `Accounts: ${names.join(", ")}; set ${PIN_VAR} to one of them, or unset it`
+          : `There are no accounts; unset ${PIN_VAR}, or run \`${BIN} account add ${validAccount(pin) ? pin : "<name>"}\``,
       ]);
     }
     if (named !== undefined && named !== pin) {
-      throw new ToolError(`${PIN_VAR} pins this session to account ${pin}; ${named} was asked for`, "ACCOUNT_LOCKED", [`Run \`${commandLine(i.argv)}\` without naming another account, or change the pin`]);
+      throw new ToolError(`${PIN_VAR} pins this session to account ${pin}; ${named} was asked for`, "ACCOUNT_LOCKED", [
+        `Run \`${commandLine(i.argv)}\` without naming another account, or change the pin`,
+      ]);
     }
     return { name: pin, source: "env" };
   }
@@ -144,12 +155,19 @@ export function resolveAccount(i: ResolveInput): Resolved {
   if (names.length === 1) return { name: names[0], source: "only" };
   const lines = names.map((n) => `Run \`${commandLine([...i.argv, "--account", n])}\` to act as ${n}`);
   if (i.mutation) {
-    throw new ToolError(`\`${i.command}\` changes an account, and there are ${names.length} accounts (${names.join(", ")}): name one with --account`, "ACCOUNT_REQUIRED", lines);
+    throw new ToolError(
+      `\`${i.command}\` changes an account, and there are ${names.length} accounts (${names.join(", ")}): name one with --account`,
+      "ACCOUNT_REQUIRED",
+      lines,
+    );
   }
   const def = readDefault(i.roots);
   if (def !== undefined) {
     if (!names.includes(def)) {
-      throw failure(`The default account ${def} no longer exists.`, "NO_ACCOUNT", [`Run \`${BIN} account use <name>\` with one of: ${names.join(", ")}`, ...lines]);
+      throw failure(`The default account ${def} no longer exists.`, "NO_ACCOUNT", [
+        `Run \`${BIN} account use <name>\` with one of: ${names.join(", ")}`,
+        ...lines,
+      ]);
     }
     return { name: def, source: "default" };
   }

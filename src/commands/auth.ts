@@ -25,8 +25,7 @@ export const authLinkSpec: CommandSpec = {
   jsonOut: true,
 };
 
-export const WHERE_TO_TYPE =
-  "On the account's phone: WhatsApp > Linked devices > Link a device > Link with phone number instead, then type the code";
+export const WHERE_TO_TYPE = "On the account's phone: WhatsApp > Linked devices > Link a device > Link with phone number instead, then type the code";
 const WHERE_TO_SCAN = "On the account's phone: WhatsApp > Linked devices > Link a device, then scan the code";
 
 /** Renders a QR payload for a terminal. */
@@ -46,7 +45,10 @@ function linkFailure(account: string, af: string, err: Obj, phone: string | unde
     case "LINK_CANCELLED":
       return failure(message, code, [`Run \`${again}\` and complete it on the phone within about three minutes`]);
     case "CLIENT_OUTDATED":
-      return failure(message, code, ["WhatsApp rejected this client as too old: only a release built on a newer library fixes this", `Run \`whatsapp-axi doctor${af}\` to see the versions`]);
+      return failure(message, code, [
+        "WhatsApp rejected this client as too old: only a release built on a newer library fixes this",
+        `Run \`whatsapp-axi doctor${af}\` to see the versions`,
+      ]);
     default:
       return failure(message, code, [`Run \`whatsapp-axi doctor${af}\` to check the account`, `Run \`${again}\` to try again`]);
   }
@@ -57,8 +59,13 @@ export async function authLink(ctx: Ctx, args: string[], write: (s: string) => v
   const phone = p.flags.phone as string | undefined;
   const qr = p.flags.qr === true;
   if (phone !== undefined && qr) throw contradiction("--phone", "--qr");
-  if (phone === undefined && !qr) throw usage("`auth link` needs --phone <number> (pairing code) or --qr", ["usage: whatsapp-axi auth link --phone <number>", "usage: whatsapp-axi auth link --qr"]);
-  if (phone !== undefined && !PHONE_RE.test(phone)) throw invalid(`--phone must be a phone number in E.164 form like +15550100001, got ${JSON.stringify(phone)}`);
+  if (phone === undefined && !qr)
+    throw usage("`auth link` needs --phone <number> (pairing code) or --qr", [
+      "usage: whatsapp-axi auth link --phone <number>",
+      "usage: whatsapp-axi auth link --qr",
+    ]);
+  if (phone !== undefined && !PHONE_RE.test(phone))
+    throw invalid(`--phone must be a phone number in E.164 form like +15550100001, got ${JSON.stringify(phone)}`);
   const name = account(ctx);
   const af = acctFlag(ctx, name);
   const d = ctx.daemon(name);
@@ -91,9 +98,15 @@ export async function authLink(ctx: Ctx, args: string[], write: (s: string) => v
   const again = phone ? `whatsapp-axi auth link --phone ${phone}${af}` : `whatsapp-axi auth link --qr${af}`;
   if (signal?.aborted) {
     // Interrupted (SIGINT or SIGTERM): the account is not linked, so this is not a success.
-    throw failure("The link was interrupted before the phone completed it; the daemon abandons the attempt and the account is not linked.", "LINK_INTERRUPTED", [`Run \`${again}\` to try again`]);
+    throw failure(
+      "The link was interrupted before the phone completed it; the daemon abandons the attempt and the account is not linked.",
+      "LINK_INTERRUPTED",
+      [`Run \`${again}\` to try again`],
+    );
   }
-  throw failure(`The daemon of account ${name} ended the link stream without a result.`, "STREAM_CLOSED", [`Run \`whatsapp-axi doctor${af}\` to check the daemon`]);
+  throw failure(`The daemon of account ${name} ended the link stream without a result.`, "STREAM_CLOSED", [
+    `Run \`whatsapp-axi doctor${af}\` to check the daemon`,
+  ]);
 }
 
 export const authLogoutSpec: CommandSpec = {
@@ -111,7 +124,9 @@ export async function authLogout(ctx: Ctx, args: string[]): Promise<unknown> {
   const name = account(ctx);
   const af = acctFlag(ctx, name);
   if (p.flags.confirm !== true) {
-    throw confirmRequired("`auth logout` unlinks the device and deletes the session; add --confirm", [`Run \`whatsapp-axi auth logout --confirm${af}\` to unlink it`]);
+    throw confirmRequired("`auth logout` unlinks the device and deletes the session; add --confirm", [
+      `Run \`whatsapp-axi auth logout --confirm${af}\` to unlink it`,
+    ]);
   }
   const d = ctx.daemon(name);
   try {
@@ -123,5 +138,10 @@ export async function authLogout(ctx: Ctx, args: string[]): Promise<unknown> {
     }
     throw err;
   }
-  return { action: "unlinked", state: "unlinked", note: "kept messages are left in place; `forget` deletes them", help: [`Run \`whatsapp-axi auth link --phone <number>${af}\` to link again`] };
+  return {
+    action: "unlinked",
+    state: "unlinked",
+    note: "kept messages are left in place; `forget` deletes them",
+    help: [`Run \`whatsapp-axi auth link --phone <number>${af}\` to link again`],
+  };
 }

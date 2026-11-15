@@ -11,7 +11,15 @@ const SAM = { id: "100000000000001@lid", pn: "+15550100001", name: "Sam", me: fa
 const MESSAGE = { id: "3EB0AAAA0000000001", from: SAM, t: "2030-01-05T14:03:11Z", text: "hello", kept_by: "mention", mentions_me: true };
 const EVENTS = [
   { seq: 412, kind: "message", t: "2030-01-05T14:03:11Z", chat: { id: GROUP, type: "group", name: "Example group" }, message: MESSAGE },
-  { seq: 413, kind: "reaction", t: "2030-01-05T14:04:00Z", chat: { id: GROUP, type: "group", name: "Example group" }, target: MESSAGE.id, from: SAM, emoji: "👍" },
+  {
+    seq: 413,
+    kind: "reaction",
+    t: "2030-01-05T14:04:00Z",
+    chat: { id: GROUP, type: "group", name: "Example group" },
+    target: MESSAGE.id,
+    from: SAM,
+    emoji: "👍",
+  },
 ];
 const SENT = { id: "3EB0F0000000000001", chat: GROUP, t: "2030-01-05T15:00:00Z" };
 
@@ -41,8 +49,20 @@ const read = (p: string) => JSON.parse(readFileSync(p, "utf-8"));
 
 describe("--json-out=path writes the daemon's body; stdout stays TOON", () => {
   const cases: [string, string[], string, Record<string, unknown>, string][] = [
-    ["a list (chats)", ["chats"], "GET /v1/chats", { chats: [{ id: GROUP, name: "Example group", type: "group", scope: "tagged", last_kept: null, discarded: 4, messages: 2 }], total: 1 }, ".chats[]"],
-    ["a detail (chat view)", ["chat", "view", GROUP], "GET /v1/chats/*", { chat: { id: GROUP, name: "Example group", type: "group", scope: "tagged", participants: [SAM] } }, "jq ."],
+    [
+      "a list (chats)",
+      ["chats"],
+      "GET /v1/chats",
+      { chats: [{ id: GROUP, name: "Example group", type: "group", scope: "tagged", last_kept: null, discarded: 4, messages: 2 }], total: 1 },
+      ".chats[]",
+    ],
+    [
+      "a detail (chat view)",
+      ["chat", "view", GROUP],
+      "GET /v1/chats/*",
+      { chat: { id: GROUP, name: "Example group", type: "group", scope: "tagged", participants: [SAM] } },
+      "jq .",
+    ],
     ["events", ["events", "--after", "411"], "GET /v1/events", { events: EVENTS, latest_seq: 413, after: 411, total: 2 }, ".events[]"],
     ["a mutation (send)", ["send", GROUP, "On it"], "POST /v1/send", SENT, "jq ."],
   ];
@@ -87,7 +107,12 @@ describe("a stream appends one object per line", () => {
     const p = join(dir, "link.json");
     const r = await run(["auth", "link", "--phone", "+15550100000", `--json-out=${p}`]);
     expect(r.code, r.out).toBe(0);
-    expect(readFileSync(p, "utf-8").trim().split("\n").map((l) => JSON.parse(l))).toEqual(lines);
+    expect(
+      readFileSync(p, "utf-8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l)),
+    ).toEqual(lines);
     expect(r.out).toContain("ABCD-EFGH");
     expect(r.out).toContain(`wrote: ${p} (2 JSON lines)`);
     expect(r.out).toContain(`jq -c . ${p}`);
@@ -112,7 +137,11 @@ describe("doctor and daemon status write the rows they print", () => {
   });
 
   it("other local commands reject it as unknown", async () => {
-    for (const argv of [["accounts", "--json-out"], ["daemon", "logs", "example", "--json-out"], ["account", "add", "x", "--json-out"]]) {
+    for (const argv of [
+      ["accounts", "--json-out"],
+      ["daemon", "logs", "example", "--json-out"],
+      ["account", "add", "x", "--json-out"],
+    ]) {
       const r = await run(argv);
       expect(r.code, argv.join(" ")).toBe(2);
       expect(r.out).toContain("unknown flag --json-out");
@@ -216,7 +245,11 @@ describe("the flag itself", () => {
   });
 
   it("--json is an unknown flag", async () => {
-    for (const argv of [["chats", "--json"], ["accounts", "--json"], ["send", GROUP, "hi", "--json"]]) {
+    for (const argv of [
+      ["chats", "--json"],
+      ["accounts", "--json"],
+      ["send", GROUP, "hi", "--json"],
+    ]) {
       const r = await run(argv);
       expect(r.code, argv.join(" ")).toBe(2);
       expect(r.out).toContain("unknown flag --json");

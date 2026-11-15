@@ -58,7 +58,10 @@ export const chatsSpec: CommandSpec = {
   name: "chats",
   summary: "Chats with kept content: id, name, type, effective scope",
   positionals: [],
-  flags: { limit: limitFlag(10000, "default: all"), fields: { type: "string", value: "<list>", desc: "add columns: last_kept, discarded, messages, override" } },
+  flags: {
+    limit: limitFlag(10000, "default: all"),
+    fields: { type: "string", value: "<list>", desc: "add columns: last_kept, discarded, messages, override" },
+  },
   examples: ["whatsapp-axi chats", "whatsapp-axi chats --limit 10 --fields last_kept,discarded"],
   jsonOut: true,
 };
@@ -105,7 +108,10 @@ export async function groups(ctx: Ctx, args: string[]): Promise<unknown> {
   const count = countOf(d, list.length, res.total);
   const af = acctFlag(ctx, name);
   if (list.length === 0) return { groups: "0 groups: the account is not a member of any group" };
-  const help = [`Run \`whatsapp-axi chat view <group>${af}\` for its participants`, `Run \`whatsapp-axi scope set <scope> --chat <group>${af}\` to change what is kept from it`];
+  const help = [
+    `Run \`whatsapp-axi chat view <group>${af}\` for its participants`,
+    `Run \`whatsapp-axi scope set <scope> --chat <group>${af}\` to change what is kept from it`,
+  ];
   if (cut(list.length, res.total)) help.unshift(`Run \`whatsapp-axi groups --limit ${res.total as number}${af}\` to see all ${res.total as number}`);
   return { count, groups: pick(list, ["id", "name", "scope", "members", ...fields]), help };
 }
@@ -235,7 +241,14 @@ export async function events(ctx: Ctx, args: string[], write: (s: string) => voi
         const m = asMarkOutcome(d, err);
         unmarked += m.failed;
         reason = m.reason ?? reason;
-        write(line({ error: typeof err.message === "string" ? err.message : `${m.failed} not marked read`, code: "MARK_FAILED", failed: m.failed, ...(m.reason ? { reason: m.reason } : {}) }));
+        write(
+          line({
+            error: typeof err.message === "string" ? err.message : `${m.failed} not marked read`,
+            code: "MARK_FAILED",
+            failed: m.failed,
+            ...(m.reason ? { reason: m.reason } : {}),
+          }),
+        );
         continue;
       }
       expect(d, typeof e.seq === "number" && typeof e.kind === "string", "event is missing fields");
@@ -245,7 +258,10 @@ export async function events(ctx: Ctx, args: string[], write: (s: string) => voi
     const out: Obj = {};
     if (last !== undefined) out.last_seq = last;
     if (unmarked) {
-      Object.assign(out, markError(ctx, { marked: 0, already_marked: 0, failed: unmarked, reason }, af, `whatsapp-axi events --after ${after ?? 0} --mark-read${filters}${af}`));
+      Object.assign(
+        out,
+        markError(ctx, { marked: 0, already_marked: 0, failed: unmarked, reason }, af, `whatsapp-axi events --after ${after ?? 0} --mark-read${filters}${af}`),
+      );
     }
     return out;
   }
@@ -265,8 +281,14 @@ export async function events(ctx: Ctx, args: string[], write: (s: string) => voi
   } else {
     if (after === undefined) out.note = `showing the ${plural(list.length, "most recent event")}; pass --after <seq> to read forward`;
     out.count = count;
-    out.events = pick(list.map((e) => eventRow(ctx, e, fields.includes("t"))), keys);
-    help = [`Run \`whatsapp-axi events --after ${lastSeq}${filters}${af}\` for what comes next`, `Run \`whatsapp-axi message view <chat>/<id>${af}\` for a message in full`];
+    out.events = pick(
+      list.map((e) => eventRow(ctx, e, fields.includes("t"))),
+      keys,
+    );
+    help = [
+      `Run \`whatsapp-axi events --after ${lastSeq}${filters}${af}\` for what comes next`,
+      `Run \`whatsapp-axi message view <chat>/<id>${af}\` for a message in full`,
+    ];
     if (cut(list.length, res.total)) {
       const rest = (res.total as number) - list.length;
       help.unshift(
@@ -313,7 +335,10 @@ export async function read(ctx: Ctx, args: string[]): Promise<unknown> {
   const limit = checkLimit(p.flags.limit, 500);
   const name = account(ctx, { mutation: p.flags["mark-read"] === true });
   const d = ctx.daemon(name);
-  const res = await d.call("GET", `/v1/messages${q({ chat: p.pos[0], before: p.flags.before as string | undefined, limit, mark_read: p.flags["mark-read"] ? 1 : undefined })}`);
+  const res = await d.call(
+    "GET",
+    `/v1/messages${q({ chat: p.pos[0], before: p.flags.before as string | undefined, limit, mark_read: p.flags["mark-read"] ? 1 : undefined })}`,
+  );
   const chat = res.chat as Obj | undefined;
   expect(d, chat && typeof chat.id === "string" && Array.isArray(res.messages), "messages is missing fields");
   const list = res.messages as Obj[];
@@ -450,6 +475,7 @@ export async function forget(ctx: Ctx, args: string[]): Promise<unknown> {
   const res = await d.call("POST", "/v1/forget", body);
   const f = res.forgotten as Obj | undefined;
   expect(d, f && typeof f.messages === "number" && typeof f.events === "number", "forget is missing fields");
-  if (f.messages === 0 && f.events === 0) return { action: "unchanged", reason: `nothing kept${f.message ? ` for message ${f.message as string}` : ""} in ${f.chat as string} (no-op)` };
+  if (f.messages === 0 && f.events === 0)
+    return { action: "unchanged", reason: `nothing kept${f.message ? ` for message ${f.message as string}` : ""} in ${f.chat as string} (no-op)` };
   return { action: "deleted", chat: f.chat, ...(f.message ? { message: f.message } : {}), messages: f.messages, events: f.events };
 }

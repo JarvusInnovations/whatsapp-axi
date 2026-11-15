@@ -86,7 +86,12 @@ function usageHelp(spec: CommandSpec): string[] {
 
 function jsonOutExamples(): string {
   const names = jsonOutCommands.length ? jsonOutCommands : ["read", "events", "chats"];
-  return names.slice(0, 4).map((n) => `\`${n}\``).join(", ") + (names.length > 4 ? " and the other commands that call the daemon" : "");
+  return (
+    names
+      .slice(0, 4)
+      .map((n) => `\`${n}\``)
+      .join(", ") + (names.length > 4 ? " and the other commands that call the daemon" : "")
+  );
 }
 
 /**
@@ -105,7 +110,8 @@ function guessed(spec: CommandSpec, typed: string): string | undefined {
   if (typed === "--json-out" || typed.startsWith("--json-out=")) {
     return `\`${spec.name}\` writes no JSON file; --json-out works on ${jsonOutExamples()}`;
   }
-  if (typed === "--force") return "--force is not a flag of this tool: a change that needs consent takes --confirm, and the error that asks for it shows the full command";
+  if (typed === "--force")
+    return "--force is not a flag of this tool: a change that needs consent takes --confirm, and the error that asks for it shows the full command";
   return undefined;
 }
 
@@ -229,7 +235,8 @@ export function renderHelp(spec: CommandSpec): string {
   if (n) {
     lines.push(`flags[${n}]:`);
     for (const [name, f] of flags) lines.push(`  --${name}${f.type === "bool" ? "" : ` ${f.value ?? "<value>"}`}: ${f.desc}`);
-    if (spec.jsonOut) lines.push("  --json-out[=path]: also write the complete result as JSON to a file (bare: under the temp directory); standard output stays TOON");
+    if (spec.jsonOut)
+      lines.push("  --json-out[=path]: also write the complete result as JSON to a file (bare: under the temp directory); standard output stays TOON");
   }
   lines.push("global_flags[3]:", `  --account <name>: ${GLOBAL_FLAGS.account.desc}`, `  --tz <iana>: ${GLOBAL_FLAGS.tz.desc}`, "  --help: this help");
   if (spec.examples.length) {

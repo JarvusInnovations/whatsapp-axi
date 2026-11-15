@@ -17,7 +17,9 @@ function usage(spec: CommandSpec): string {
 /** The reference, one list per group, in reference order. */
 export function commandReferenceMarkdown(groups: { title: string; specs: CommandSpec[] }[]): string {
   return groups
-    .map((g) => [`### ${g.title[0].toUpperCase()}${g.title.slice(1)}`, "", ...g.specs.map((s) => `- \`${SKILL_INVOCATION} ${usage(s)}\` — ${s.summary}`)].join("\n"))
+    .map((g) =>
+      [`### ${g.title[0].toUpperCase()}${g.title.slice(1)}`, "", ...g.specs.map((s) => `- \`${SKILL_INVOCATION} ${usage(s)}\` — ${s.summary}`)].join("\n"),
+    )
     .join("\n\n");
 }
 

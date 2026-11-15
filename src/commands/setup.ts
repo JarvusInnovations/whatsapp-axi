@@ -8,7 +8,14 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
-import { computeCodexConfigUpdate, computeSessionStartHookUpdate, resolvePortableHookCommand, uninstallSessionStartHooks, type HookSettings, type SessionStartHookScope } from "axi-sdk-js";
+import {
+  computeCodexConfigUpdate,
+  computeSessionStartHookUpdate,
+  resolvePortableHookCommand,
+  uninstallSessionStartHooks,
+  type HookSettings,
+  type SessionStartHookScope,
+} from "axi-sdk-js";
 import { oneOf, parse, type CommandSpec } from "../flags.js";
 import { failure, invalid, reasonOf } from "../errors.js";
 import { envVar, listAccounts, validAccount } from "../paths.js";
@@ -238,13 +245,19 @@ export default {
 }
 
 const SETUP_FLAGS = {
-  scope: { type: "string" as const, value: "<scope>", desc: "user (default: every session of this user) or project (this project's agent config)", values: ["user", "project"] },
+  scope: {
+    type: "string" as const,
+    value: "<scope>",
+    desc: "user (default: every session of this user) or project (this project's agent config)",
+    values: ["user", "project"],
+  },
   dir: { type: "string" as const, value: "<path>", desc: "the project for --scope project (default: the git root of the working directory)" },
 };
 
 export const setupHooksSpec: CommandSpec = {
   name: "setup hooks",
-  summary: "Install or repair the session-start hook for Claude Code, Codex and OpenCode (--scope user|project, default user). The only command that writes a hook",
+  summary:
+    "Install or repair the session-start hook for Claude Code, Codex and OpenCode (--scope user|project, default user). The only command that writes a hook",
   positionals: [],
   flags: SETUP_FLAGS,
   examples: ["whatsapp-axi setup hooks", "whatsapp-axi setup hooks --scope project"],
@@ -281,7 +294,9 @@ function scopeFlags(scope: Scope, dir: unknown): string {
 
 function noAccount(ctx: Ctx, name: string): void {
   if (ctx.accountFlag !== undefined) {
-    throw invalid(`\`${name}\` acts on agents' settings, not on an account; --account does not apply`, [`Name the project's accounts in ${PROJECT_FILE} at its root: {"accounts": ["<name>"]}`]);
+    throw invalid(`\`${name}\` acts on agents' settings, not on an account; --account does not apply`, [
+      `Name the project's accounts in ${PROJECT_FILE} at its root: {"accounts": ["<name>"]}`,
+    ]);
   }
 }
 
@@ -393,7 +408,8 @@ export async function setupHooks(ctx: Ctx, args: string[]): Promise<unknown> {
   const plugin = openCodePlugin(exe);
   try {
     const cur = readText(t.opencode);
-    if (cur !== undefined && !cur.includes(OPENCODE_MANAGED)) errors.push({ path: t.opencode, problem: "exists and is not managed by whatsapp-axi; it was left alone" });
+    if (cur !== undefined && !cur.includes(OPENCODE_MANAGED))
+      errors.push({ path: t.opencode, problem: "exists and is not managed by whatsapp-axi; it was left alone" });
     else if (cur !== plugin) write(t.opencode, plugin);
   } catch (e) {
     errors.push({ path: t.opencode, problem: (e as Error).message });
@@ -421,7 +437,10 @@ export async function setupHooks(ctx: Ctx, args: string[]): Promise<unknown> {
   if (!existsSync(join(project, PROJECT_FILE))) {
     help.push(`Name a project's accounts in ${PROJECT_FILE} at its root ({"accounts": ["<name>"]}): the hook prints nothing in a project without it`);
   }
-  if (scope === "project" && exe !== MARKER) help.push("Run `whatsapp-axi setup hooks --scope project` again once whatsapp-axi is on PATH: the hook now runs this CLI by an absolute path other machines may not share");
+  if (scope === "project" && exe !== MARKER)
+    help.push(
+      "Run `whatsapp-axi setup hooks --scope project` again once whatsapp-axi is on PATH: the hook now runs this CLI by an absolute path other machines may not share",
+    );
   help.push(`Run \`whatsapp-axi setup hooks uninstall${scopeFlags(scope, p.flags.dir)}\` to undo`);
   if (!written.length) return { action: "unchanged", reason: `already installed and current at ${scope} scope (no-op)`, scope, hooks, help };
   return { action: "installed", scope, command, hooks, help };
@@ -434,7 +453,8 @@ export async function setupHooksStatus(ctx: Ctx, args: string[]): Promise<unknow
   const project = scope === "project" ? projectTarget(ctx, p.flags.dir) : hookDir(p.flags.dir, ctx.io.cwd);
   const st = hookStatus(ctx, scope, project);
   const help: string[] = [];
-  if (st.rows.some((r) => r.status === "stale" || r.status === "absent")) help.push(`Run \`whatsapp-axi setup hooks${scopeFlags(scope, p.flags.dir)}\` to install or repair it`);
+  if (st.rows.some((r) => r.status === "stale" || r.status === "absent"))
+    help.push(`Run \`whatsapp-axi setup hooks${scopeFlags(scope, p.flags.dir)}\` to install or repair it`);
   if (st.problems.length) ctx.exitCode = 1;
   return {
     scope,
@@ -460,12 +480,19 @@ export async function setupHooksUninstall(ctx: Ctx, args: string[]): Promise<unk
   const after = hookStatus(ctx, scope, project);
   const left = after.rows.filter((r) => r.status === "installed" || r.status === "stale").map((r) => r.agent);
   if (errors.length || left.length) {
-    throw failure(`setup hooks uninstall did not finish at ${scope} scope: ${errors.length ? errors.join("; ") : `still installed for ${left.join(", ")}`}`, "SETUP_FAILED", [
-      `Run \`whatsapp-axi setup hooks uninstall${scopeFlags(scope, p.flags.dir)}\` again after fixing the files named above`,
-    ]);
+    throw failure(
+      `setup hooks uninstall did not finish at ${scope} scope: ${errors.length ? errors.join("; ") : `still installed for ${left.join(", ")}`}`,
+      "SETUP_FAILED",
+      [`Run \`whatsapp-axi setup hooks uninstall${scopeFlags(scope, p.flags.dir)}\` again after fixing the files named above`],
+    );
   }
   if (!present.length) return { action: "unchanged", reason: `not installed at ${scope} scope (no-op)`, scope };
-  return { action: "uninstalled", scope, agents: present.join(", "), help: [RESTART, `Run \`whatsapp-axi setup hooks${scopeFlags(scope, p.flags.dir)}\` to undo`] };
+  return {
+    action: "uninstalled",
+    scope,
+    agents: present.join(", "),
+    help: [RESTART, `Run \`whatsapp-axi setup hooks${scopeFlags(scope, p.flags.dir)}\` to undo`],
+  };
 }
 
 // ---- session-start (what the hook runs) --------------------------------------------
@@ -488,7 +515,8 @@ export function readProjectFile(dir: string): ProjectFile {
 
 export const sessionStartSpec: CommandSpec = {
   name: "session-start",
-  summary: "What the hook runs: one row per account named in the project's .whatsapp-axi.json (state, scope, events kept in the last 24 hours); nothing without the file; writes nothing; always exits 0",
+  summary:
+    "What the hook runs: one row per account named in the project's .whatsapp-axi.json (state, scope, events kept in the last 24 hours); nothing without the file; writes nothing; always exits 0",
   positionals: [],
   flags: { dir: { type: "string", value: "<path>", desc: "the project (default: the git root of the working directory, else the working directory)" } },
   examples: ["whatsapp-axi session-start"],
@@ -509,7 +537,10 @@ async function hookRow(ctx: Ctx, name: string, names: string[]): Promise<HookRow
   const ask = async (): Promise<HookRow> => {
     const st = await d.status();
     const s = await d.call("GET", "/v1/settings");
-    const scope = typeof (s.settings as Obj | undefined)?.scope === "string" ? ((s.settings as Obj).scope as string) : "unknown (UNEXPECTED_RESPONSE: settings without a scope)";
+    const scope =
+      typeof (s.settings as Obj | undefined)?.scope === "string"
+        ? ((s.settings as Obj).scope as string)
+        : "unknown (UNEXPECTED_RESPONSE: settings without a scope)";
     // Only a count: the events themselves are never printed.
     const ev = await d.call("GET", `/v1/events?since=${encodeURIComponent(since)}&limit=1`);
     const total = typeof ev.total === "number" ? ev.total : "unknown (UNEXPECTED_RESPONSE: no total)";
@@ -517,10 +548,16 @@ async function hookRow(ctx: Ctx, name: string, names: string[]): Promise<HookRow
   };
   let timer: NodeJS.Timeout | undefined;
   const late = new Promise<HookRow>((r) => {
-    timer = setTimeout(() => r({ account: name, state: `unavailable (TIMEOUT: no answer in ${HOOK_ROW.ms / 1000} s)`, scope: "?", events_24h: "?" }), HOOK_ROW.ms + 100);
+    timer = setTimeout(
+      () => r({ account: name, state: `unavailable (TIMEOUT: no answer in ${HOOK_ROW.ms / 1000} s)`, scope: "?", events_24h: "?" }),
+      HOOK_ROW.ms + 100,
+    );
   });
   try {
-    return await Promise.race([ask().catch((err: unknown): HookRow => ({ account: name, state: `unavailable (${reasonOf(err)})`, scope: "?", events_24h: "?" })), late]);
+    return await Promise.race([
+      ask().catch((err: unknown): HookRow => ({ account: name, state: `unavailable (${reasonOf(err)})`, scope: "?", events_24h: "?" })),
+      late,
+    ]);
   } finally {
     clearTimeout(timer);
   }
@@ -537,11 +574,15 @@ export async function hookOutput(ctx: Ctx, dir: string): Promise<string> {
     try {
       names = listAccounts(ctx.roots);
     } catch (err) {
-      return line({ whatsapp_axi: `unavailable (CONFIG_INVALID: ${(err as Error).message})`, help: ["Run `whatsapp-axi doctor` to see what is wrong and the fix"] });
+      return line({
+        whatsapp_axi: `unavailable (CONFIG_INVALID: ${(err as Error).message})`,
+        help: ["Run `whatsapp-axi doctor` to see what is wrong and the fix"],
+      });
     }
     const rows = await Promise.all(cfg.accounts.map((a) => hookRow(ctx, a, names)));
     const help = [`Run \`whatsapp-axi events${names.length > 1 ? " --account <name>" : ""}\` to read what was kept`];
-    if (rows.some((r) => r.state.startsWith("unavailable") || r.state.startsWith("unknown"))) help.push("Run `whatsapp-axi doctor` to see what is wrong and the fix");
+    if (rows.some((r) => r.state.startsWith("unavailable") || r.state.startsWith("unknown")))
+      help.push("Run `whatsapp-axi doctor` to see what is wrong and the fix");
     return line({ whatsapp_axi: rows, help });
   } catch {
     return "";

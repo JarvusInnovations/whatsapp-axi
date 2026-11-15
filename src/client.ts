@@ -92,7 +92,11 @@ export class Daemon {
   /** A send the CLI stopped waiting for: it may have gone out. */
   private outcomeUnknown(s: SendContext, why: string): ToolError {
     const id = s.id ? ` (id ${s.id})` : "";
-    return failure(`The daemon of account ${this.account} did not answer the send${id} (${why}); it may have gone out.`, "OUTCOME_UNKNOWN", this.outcomeHelp(s));
+    return failure(
+      `The daemon of account ${this.account} did not answer the send${id} (${why}); it may have gone out.`,
+      "OUTCOME_UNKNOWN",
+      this.outcomeHelp(s),
+    );
   }
 
   private helpForCode(code: string, body: Json, send?: SendContext): string[] {
@@ -114,10 +118,16 @@ export class Daemon {
           : ["Add --first-contact if you mean to message this chat for the first time"];
       case "RATE_LIMITED": {
         const s = typeof body.retry_after_seconds === "number" ? body.retry_after_seconds : undefined;
-        return [`Wait${s ? ` ${s} seconds` : ""} and run the same command again`, `Run \`whatsapp-axi settings show${af}\` to see the limits (send.per_minute, send.per_hour)`];
+        return [
+          `Wait${s ? ` ${s} seconds` : ""} and run the same command again`,
+          `Run \`whatsapp-axi settings show${af}\` to see the limits (send.per_minute, send.per_hour)`,
+        ];
       }
       case "DUPLICATE_TEXT":
-        return ["The same text went to too many chats in ten minutes (send.same_text_chats): vary the text or wait", `Run \`whatsapp-axi settings show${af}\` to see the limit`];
+        return [
+          "The same text went to too many chats in ten minutes (send.same_text_chats): vary the text or wait",
+          `Run \`whatsapp-axi settings show${af}\` to see the limit`,
+        ];
       case "NOT_DOWNLOADABLE":
         return ["The media cannot be fetched: it is missing, view-once, or expired on WhatsApp's servers"];
       case "OUTCOME_UNKNOWN":

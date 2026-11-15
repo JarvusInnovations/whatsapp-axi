@@ -5,10 +5,28 @@ import { usageLine, type CommandSpec } from "./flags.js";
 import { accountAddSpec, accountMigrateSpec, accountRemoveSpec, accountsSpec, accountUseSpec, daemonRunSpec, DISCOVERY } from "./commands/accounts.js";
 import { downloadSpec, markReadSpec, reactSpec, sendFileSpec, sendSpec, typingSpec } from "./commands/act.js";
 import { authLinkSpec, authLogoutSpec } from "./commands/auth.js";
-import { daemonInstallSpec, daemonLogsSpec, daemonRestartSpec, daemonStartSpec, daemonStatusSpec, daemonStopSpec, daemonUninstallSpec, daemonUpgradeSpec } from "./commands/daemon.js";
+import {
+  daemonInstallSpec,
+  daemonLogsSpec,
+  daemonRestartSpec,
+  daemonStartSpec,
+  daemonStatusSpec,
+  daemonStopSpec,
+  daemonUninstallSpec,
+  daemonUpgradeSpec,
+} from "./commands/daemon.js";
 import { doctorSpec } from "./commands/doctor.js";
 import { chatViewSpec, chatsSpec, eventsSpec, forgetSpec, groupsSpec, messageViewSpec, readSpec } from "./commands/read.js";
-import { operatorsAddSpec, operatorsListSpec, operatorsRemoveSpec, scopeDMFromSpec, scopeSetSpec, scopeShowSpec, settingsSetSpec, settingsShowSpec } from "./commands/settings.js";
+import {
+  operatorsAddSpec,
+  operatorsListSpec,
+  operatorsRemoveSpec,
+  scopeDMFromSpec,
+  scopeSetSpec,
+  scopeShowSpec,
+  settingsSetSpec,
+  settingsShowSpec,
+} from "./commands/settings.js";
 import { sessionStartSpec, setupHooksSpec, setupHooksStatusSpec, setupHooksUninstallSpec } from "./commands/setup.js";
 import { updateSpec } from "./commands/update.js";
 import { BIN } from "./errors.js";
@@ -24,10 +42,25 @@ export const GROUPS: Group[] = [
   { title: "accounts", specs: [accountsSpec, accountAddSpec, accountUseSpec, accountRemoveSpec, accountMigrateSpec, authLinkSpec, authLogoutSpec] },
   { title: "reading", specs: [chatsSpec, groupsSpec, chatViewSpec, eventsSpec, readSpec, messageViewSpec] },
   { title: "acting", specs: [sendSpec, sendFileSpec, reactSpec, markReadSpec, typingSpec, downloadSpec, forgetSpec] },
-  { title: "settings", specs: [scopeShowSpec, scopeSetSpec, scopeDMFromSpec, operatorsListSpec, operatorsAddSpec, operatorsRemoveSpec, settingsShowSpec, settingsSetSpec] },
+  {
+    title: "settings",
+    specs: [scopeShowSpec, scopeSetSpec, scopeDMFromSpec, operatorsListSpec, operatorsAddSpec, operatorsRemoveSpec, settingsShowSpec, settingsSetSpec],
+  },
   {
     title: "daemon",
-    specs: [daemonInstallSpec, daemonUninstallSpec, daemonStartSpec, daemonStopSpec, daemonRestartSpec, daemonStatusSpec, daemonLogsSpec, daemonUpgradeSpec, daemonRunSpec, doctorSpec, updateSpec],
+    specs: [
+      daemonInstallSpec,
+      daemonUninstallSpec,
+      daemonStartSpec,
+      daemonStopSpec,
+      daemonRestartSpec,
+      daemonStatusSpec,
+      daemonLogsSpec,
+      daemonUpgradeSpec,
+      daemonRunSpec,
+      doctorSpec,
+      updateSpec,
+    ],
   },
   { title: "agents", specs: [setupHooksSpec, setupHooksStatusSpec, setupHooksUninstallSpec, sessionStartSpec] },
 ];

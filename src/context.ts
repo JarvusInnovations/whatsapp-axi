@@ -151,7 +151,11 @@ export interface MarkOutcome {
 /** A mark answer; every count must be there (fail closed). */
 export function asMarkOutcome(d: Daemon, v: unknown): MarkOutcome {
   const o = v as Record<string, unknown> | null | undefined;
-  expect(d, o && typeof o === "object" && typeof o.marked === "number" && typeof o.already_marked === "number" && typeof o.failed === "number", "a mark answer without marked, already_marked and failed");
+  expect(
+    d,
+    o && typeof o === "object" && typeof o.marked === "number" && typeof o.already_marked === "number" && typeof o.failed === "number",
+    "a mark answer without marked, already_marked and failed",
+  );
   return {
     marked: o.marked as number,
     already_marked: o.already_marked as number,
@@ -178,4 +182,3 @@ export function markError(ctx: Ctx, m: MarkOutcome, af: string, retry: string): 
   const what = m.marked ? `${m.marked} marked read, ${m.failed} not marked` : `${m.failed} not marked read`;
   return { error: `${what} (${m.reason ?? "unknown reason"})`, code: "MARK_FAILED", help: [markFix(m.reason, af, retry)] };
 }
-
