@@ -13,7 +13,7 @@
 #     are allowed
 #   - an email address, unless its domain is reserved for documentation (RFC 2606 / 6761)
 #
-#   bash scripts/scrub-check.sh        # (npm run check:scrub) exit 0 clean, 1 on any hit, 2 on error
+#   bash scripts/scrub-check.sh        # (bun run check:scrub) exit 0 clean, 1 on any hit, 2 on error
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)

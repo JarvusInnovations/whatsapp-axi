@@ -35,14 +35,14 @@ How each of these works is decided in [`specs/`](specs/), not here.
 
 ## Install from source
 
-You need Node 22 and Go (versions in `.tool-versions`), and Linux with systemd user services for
+You need Node 22, bun and Go (versions in `.tool-versions`), and Linux with systemd user services for
 the `daemon install` service commands.
 
 ```sh
 git clone https://github.com/JarvusInnovations/whatsapp-axi.git
 cd whatsapp-axi
-npm ci && npm run build      # the CLI, in dist/
-npm run build:daemon         # the daemon, in daemon/bin/whatsapp-axid
+bun install && bun run build    # the CLI, in dist/
+bun run build:daemon            # the daemon, in daemon/bin/whatsapp-axid
 npm link                     # puts whatsapp-axi on PATH (or run node dist/bin/whatsapp-axi.js)
 ```
 
@@ -142,7 +142,9 @@ or abusive. Use a number you can afford to lose, and keep volumes human.
 
 ## Development
 
-Toolchain versions are pinned in `.tool-versions` (asdf). Build the daemon with `npm run build:daemon`,
+Toolchain versions are pinned in `.tool-versions` (asdf): bun installs, runs the scripts and the
+tests; the published package is an ordinary npm package for Node 22 or later. Build the daemon
+with `bun run build:daemon`,
 not a plain `go build`: the script stamps the version from `package.json`, which the CLI and
 `doctor` compare with their own. An unstamped build reports `0.0.0-dev` and `doctor` fails the
 versions check.
@@ -150,10 +152,10 @@ versions check.
 ```sh
 # daemon
 cd daemon && go vet ./... && go test ./... && cd ..
-npm run build:daemon   # daemon/bin/whatsapp-axid, stamped with the version in package.json
+bun run build:daemon   # daemon/bin/whatsapp-axid, stamped with the version in package.json
 
 # CLI
-npm ci && npm run lint && npm run typecheck && npm run build && npm test && npm run docs:check
+bun install && bun run lint && bun run format:check && bun run typecheck && bun run build && bun run test && bun run docs:check && bun run check:scrub
 ```
 
 ## Licence

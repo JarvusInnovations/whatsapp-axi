@@ -11,7 +11,9 @@
     "build:daemon": "cd daemon && CGO_ENABLED=0 go build -ldflags \"-X main.version=$npm_package_version\" -o bin/whatsapp-axid ./cmd/whatsapp-axid",
     "docs": "node scripts/build-skill.mjs",
     "docs:check": "node scripts/build-skill.mjs --check",
-    "check:scrub": "bash scripts/scrub-check.sh"
+    "check:scrub": "bash scripts/scrub-check.sh",
+    "format": "oxfmt src bin test scripts vitest.config.ts",
+    "format:check": "oxfmt --check src bin test scripts vitest.config.ts"
   },
   "repository": {
     "type": "git",
