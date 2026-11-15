@@ -81,8 +81,8 @@ Reports, per account, with a fix command for anything wrong:
 | --- | --- |
 | `chats` | chats with kept content: id, name, type, effective scope. `--fields` adds last kept time and discard count |
 | `chat view <chat>` | one chat, with participants marked `me`, `operator`, `contact` |
-| `events [--after <seq>] [--limit N] [--chat <chat>] [--kind <kind>] [--follow]` | events after a point. The last line of output states the highest `seq` returned, for the next call |
-| `read <chat> [--limit N] [--before <id>]` | kept messages of a chat, oldest first |
+| `events [--after <seq>] [--limit N] [--chat <chat>] [--kind <kind>] [--follow] [--mark-read]` | events after a point. `--mark-read` sends read receipts for the incoming messages returned. The last line of output states the highest `seq` returned, for the next call |
+| `read <chat> [--limit N] [--before <id>] [--mark-read]` | kept messages of a chat, oldest first |
 | `message view <ref>` | one kept message in full, with its reply context and media descriptor |
 
 `events` without `--after` returns the most recent events up to the limit, and says so.
@@ -93,6 +93,8 @@ Reports, per account, with a fix command for anything wrong:
 | --- | --- |
 | `send <chat> <text>` | sends text. `-` reads the text from standard input. `--reply <ref>`, `--mention <user>` (repeatable), `--first-contact` |
 | `send-file <chat> <path>` | sends a file. `--caption`, `--as <type>` (image, video, audio or document), `--reply <ref>`, `--first-contact` |
+| `mark-read <ref>` | marks one message read. `mark-read --chat <chat>` marks everything kept in the chat |
+| `typing <chat>` | shows the account as typing in a chat. `--stop` clears it; it also clears by itself |
 | `react <ref> <emoji>` | reacts. `--remove` removes the account's reaction |
 | `download <ref>` | fetches a kept message's media and prints the local path |
 | `forget <chat> [--message <ref>] --confirm` | deletes kept content for a chat or one message |
