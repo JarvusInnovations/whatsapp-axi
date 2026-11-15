@@ -1,5 +1,6 @@
 ---
-status: in-progress
+status: done
+pr: 29
 depends: [repo-gates]
 specs:
   - specs/conventions.md
