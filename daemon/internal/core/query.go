@@ -275,11 +275,16 @@ func (a *Account) Chat(ctx context.Context, ref string) (*ChatDetail, error) {
 	}
 	for rows.Next() {
 		var al string
-		if err := rows.Scan(&al); err == nil {
-			d.Aliases = append(d.Aliases, al)
+		if err := rows.Scan(&al); err != nil {
+			rows.Close()
+			return nil, err
 		}
+		d.Aliases = append(d.Aliases, al)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	own := a.own()
 	ops := a.Settings().Operators
@@ -688,11 +693,16 @@ func (a *Account) Forget(ctx context.Context, chatRef, id string) (*ForgetResult
 	}
 	for rows.Next() {
 		var p string
-		if rows.Scan(&p) == nil {
-			media = append(media, p)
+		if err := rows.Scan(&p); err != nil {
+			rows.Close()
+			return nil, err
 		}
+		media = append(media, p)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	if id != "" {
 		r, err := tx.ExecContext(ctx, `DELETE FROM events WHERE chat_id=? AND message_id=?`, chat, id)
 		if err != nil {
@@ -715,11 +725,19 @@ func (a *Account) Forget(ctx context.Context, chatRef, id string) (*ForgetResult
 	if err := pruneEmptyChats(ctx, tx); err != nil {
 		return nil, err
 	}
+	// The downloaded files go first: if one cannot be removed, nothing is forgotten and the
+	// request fails, so it can be run again. Never report forgotten while a file is still on disk.
+	failed := 0
+	for _, p := range media {
+		if a.removeMedia(p) != nil {
+			failed++
+		}
+	}
+	if failed > 0 {
+		return nil, &APIError{Status: http.StatusInternalServerError, Code: "internal", Message: fmt.Sprintf("Nothing was forgotten: %d downloaded media file(s) could not be removed; see the daemon's log, then run forget again.", failed)}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
-	}
-	for _, p := range media {
-		a.removeMedia(p)
 	}
 	a.checkpoint(ctx)
 	return res, nil
@@ -781,7 +799,7 @@ func (a *Account) RunRetention(ctx context.Context) (RetentionResult, error) {
 		return res, err
 	}
 	for _, p := range media {
-		a.removeMedia(p)
+		_ = a.removeMedia(p) // logged
 	}
 	if res.Messages > 0 {
 		a.checkpoint(ctx)

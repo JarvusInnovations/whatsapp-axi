@@ -671,3 +671,37 @@ func TestStatusReportsTheSendTimeout(t *testing.T) {
 		t.Fatalf("%d", st.SendTimeoutSeconds)
 	}
 }
+
+// TestForgetFailsWhenMediaStays: forget never reports forgotten while a downloaded file of it is
+// still on disk; nothing is forgotten, so it can be run again.
+func TestForgetFailsWhenMediaStays(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	d, _ := keptGroup(t)
+	keys := []byte(`{"direct_path":"/v/x"}`)
+	m := d.emit(msg("@Example doc", mention, func(mm *client.Message) {
+		mm.Media = &client.Media{Type: "document", MIME: "application/pdf", Name: "a.pdf", Size: 4, Keys: keys}
+	}))
+	d.fake.Files = map[string][]byte{string(keys): []byte("%PDF")}
+	var r core.DownloadResult
+	_, out := d.do("POST", "/v1/download", map[string]any{"chat": group, "id": m.ID})
+	json.Unmarshal(out, &r)
+	media := d.env.layout().MediaDir()
+	os.Chmod(media, 0o500)
+	defer os.Chmod(media, 0o700)
+	e := d.wantError("POST", "/v1/forget", map[string]string{"chat": group, "id": m.ID}, 500, "internal")
+	if !strings.Contains(e["message"].(string), "Nothing was forgotten") || strings.Contains(e["message"].(string), media) {
+		t.Fatalf("%v", e)
+	}
+	if !d.kept(group, m.ID) {
+		t.Fatal("forgotten although its file stayed")
+	}
+	os.Chmod(media, 0o700)
+	if code, out := d.do("POST", "/v1/forget", map[string]string{"chat": group, "id": m.ID}); code != 200 {
+		t.Fatalf("%d %s", code, out)
+	}
+	if _, err := os.Stat(r.Path); !os.IsNotExist(err) || d.kept(group, m.ID) {
+		t.Fatal("not forgotten on the second run")
+	}
+}
