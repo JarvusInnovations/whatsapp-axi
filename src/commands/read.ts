@@ -6,7 +6,6 @@ import { expect, type Daemon } from "../client.js";
 import { usage } from "../errors.js";
 import { cell, chooseAccount, longText, pick, plural, type Ctx } from "../context.js";
 import { listAccounts } from "../paths.js";
-import { output } from "../output.js";
 
 type Obj = Record<string, unknown>;
 const ACCOUNT = { type: "string" as const, value: "<name>", desc: "the account (required when there are several)" };
@@ -204,7 +203,7 @@ export async function events(ctx: Ctx, args: string[], write: (s: string) => voi
     let last = after ?? null;
     for await (const e of d.stream(`/v1/events${q({ ...query, follow: 1 })}`, signal)) {
       expect(d, typeof e.seq === "number" && typeof e.kind === "string", "event is missing fields");
-      write(output.json ? `${JSON.stringify(e)}\n` : `${encode({ events: pick([eventRow(e)], keys) })}\n`);
+      write(`${encode({ events: pick([eventRow(e)], keys) })}\n`);
       last = e.seq as number;
     }
     return { last_seq: last };

@@ -41,7 +41,7 @@ import {
 } from "./commands/settings.js";
 import { defaultCtx, type Ctx } from "./context.js";
 import { exitCodeFor, usage } from "./errors.js";
-import { output } from "./output.js";
+import { closeJsonOut, jqHint, openJsonOut, output, resetOutput, takeJsonOut, writeDoc } from "./output.js";
 import { VERSION } from "./version.js";
 
 export const DESCRIPTION = "Agent-ergonomic CLI for WhatsApp accounts, each served by a local daemon";
@@ -71,7 +71,7 @@ commands[20]:
   settings show, settings set <key> <value>
 flags:
   --account <name> on every command that acts on an account (optional with exactly one account)
-  --json on every command: one JSON document instead of TOON (the daemon's answer unchanged; streams one object per line)
+  --json-out[=path] on every command that calls the daemon, doctor and daemon status: also write the complete response as JSON to a file (bare: under the temp directory; streams one object per line); standard output stays TOON
   --help on every command; -v/--version
 `;
 
@@ -82,8 +82,6 @@ interface Sub {
   run: Handler;
 }
 
-/** Streaming handlers: with --json their lines are the output, and the final summary is not printed. */
-const STREAMS = new Set<Handler>();
 
 function writeOut(s: string): void {
   process.stdout.write(s);
@@ -103,7 +101,6 @@ function streaming(fn: (ctx: Ctx, args: string[], write: (s: string) => void, si
       process.off("SIGTERM", stop);
     }
   };
-  STREAMS.add(h);
   return h;
 }
 
@@ -162,85 +159,71 @@ function subList(name: string): string[] {
   return Object.values(GROUPS[name]).map((s) => `whatsapp-axi ${s.spec.name}`);
 }
 
-/** Commands that do not call the daemon for their answer: --json prints the data they would print as TOON. */
-const LOCAL = new Set(["accounts", "doctor", "account", "daemon"]);
-
-/** The JSON error document: `{"error": {"code", "message", ...}}`, with the daemon's extra fields. */
-function jsonError(err: unknown): { output: string; exitCode: number } {
-  const e = err as { message?: string; code?: string; suggestions?: string[]; details?: Record<string, unknown> };
-  const body: Record<string, unknown> = { ...e.details, code: e.code ?? "internal", message: e.message ?? String(err) };
-  if (e.suggestions?.length) body.help = e.suggestions;
-  return { output: `${JSON.stringify({ error: body })}\n`, exitCode: exitCodeFor(err) };
+/** Commands that take --json-out: every command that calls the daemon, plus doctor and daemon status. */
+function takesJsonOut(name: string, subName?: string): boolean {
+  if (name === "accounts" || name === "account") return false;
+  if (name === "daemon") return subName === "status";
+  return true;
 }
 
-/** Finds the handler for a command line: the command, its subcommand and the rest of the arguments. */
-function resolve(args: string[]): { sub: Sub; rest: string[]; local: boolean } {
-  const [name, ...rest] = args;
-  const single = SINGLE[name];
-  if (single) return { sub: single, rest, local: LOCAL.has(name) };
-  const subs = GROUPS[name];
-  if (!subs) throw usage(`Unknown command: ${name}`, ["Run `whatsapp-axi --help` to see the commands"]);
-  const [subName, ...more] = rest;
-  if (subName === undefined) throw usage(`\`${name}\` needs a subcommand: ${Object.keys(subs).join(", ")}`, subList(name));
-  const sub = subs[subName];
-  if (!sub) throw usage(`unknown subcommand ${JSON.stringify(subName)} for \`${name}\`; valid: ${Object.keys(subs).join(", ")}`, subList(name));
-  return { sub, rest: more, local: LOCAL.has(name) };
+/** doctor and daemon status write the rows they print; everything else the daemon's body. */
+function isLocal(name: string): boolean {
+  return name === "doctor" || name === "daemon";
 }
 
-/** Runs one command line with --json (already removed from args). */
-async function mainJson(args: string[], ctxFactory: () => Ctx): Promise<void> {
-  output.json = true;
-  output.body = undefined;
+type Obj = Record<string, unknown>;
+
+function withoutHelp(result: unknown): unknown {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+  const { help: _help, ...rest } = result as Obj;
+  return rest;
+}
+
+/** Adds the `wrote:` line and the jq hint to a printed object. */
+function annotate(result: unknown, wrote: string, hint: string): unknown {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return { result, wrote, help: [hint] };
+  const { help, ...rest } = result as Obj;
+  const prior = Array.isArray(help) ? help : typeof help === "string" ? [help] : [];
+  return { ...rest, wrote, help: [...prior, hint] };
+}
+
+/** Runs one subcommand, handling --json-out where the command takes it. */
+async function runSub(label: string, sub: Sub, rest: string[], ctxFactory: () => Ctx, eligible: boolean, local: boolean): Promise<unknown> {
+  if (rest.includes("--help")) return renderHelp(sub.spec) + (eligible ? JSON_OUT_HELP : "");
+  if (!eligible) return sub.run(ctxFactory(), rest);
+  const { args, path } = takeJsonOut(rest);
+  if (path === undefined) return sub.run(ctxFactory(), args);
+  resetOutput();
+  const file = openJsonOut(path, label);
+  output.file = file;
   try {
-    if (args.length === 0) {
-      process.stdout.write(`${JSON.stringify(await home(ctxFactory()))}\n`);
-      return;
+    let result: unknown;
+    try {
+      result = await sub.run(ctxFactory(), args);
+    } catch (err) {
+      const e = err as { message?: string; code?: string; suggestions?: string[]; jsonOut?: { wrote: string; hint: string } };
+      const doc = { error: output.daemonError ?? { code: e.code ?? "internal", message: e.message ?? String(err) } };
+      writeDoc(doc);
+      e.jsonOut = { wrote: `${file.path} (${file.lines > 0 ? `${file.lines} JSON lines then the error` : "the error"})`, hint: jqHint(file.path, doc, file.lines > 0) };
+      throw err;
     }
-    if (args[0].startsWith("-")) {
-      if (["-v", "-V", "--version"].includes(args[0]) && args.length === 1) {
-        process.stdout.write(`${JSON.stringify({ version: VERSION })}\n`);
-        return;
-      }
-      if (args[0] === "--help" && args.length === 1) {
-        process.stdout.write(`${JSON.stringify({ help: TOP_HELP })}\n`);
-        return;
-      }
-      throw usage(`flags come after the command; ${JSON.stringify(args[0])} came first`, ["Run `whatsapp-axi <command> [args] [flags]`", "Run `whatsapp-axi --help` to see the commands"]);
-    }
-    if (GROUPS[args[0]] && args[1] === "--help") {
-      process.stdout.write(`${JSON.stringify({ help: groupHelp(args[0]) })}\n`);
-      return;
-    }
-    const { sub, rest, local } = resolve(args);
-    if (rest.includes("--help")) {
-      process.stdout.write(`${JSON.stringify({ help: renderHelp(sub.spec) })}\n`);
-      return;
-    }
-    const result = await sub.run(ctxFactory(), rest);
-    if (STREAMS.has(sub.run) && !local && output.body === undefined) return;
-    const doc = !local && output.body !== undefined ? output.body : result;
-    process.stdout.write(`${JSON.stringify(doc)}\n`);
-  } catch (err) {
-    const f = jsonError(err);
-    process.stdout.write(f.output);
-    process.exitCode = f.exitCode;
+    if (file.lines > 0) return annotate(result, `${file.path} (${file.lines} JSON ${file.lines === 1 ? "line" : "lines"})`, jqHint(file.path, undefined, true));
+    const doc = local || output.body === undefined ? withoutHelp(result) : output.body;
+    writeDoc(doc);
+    return annotate(result, `${file.path} (${local ? "the rows printed" : "the daemon's response body"})`, jqHint(file.path, doc, false));
   } finally {
-    output.json = false;
-    output.body = undefined;
+    closeJsonOut();
+    resetOutput();
   }
 }
+
+const JSON_OUT_HELP = "also: --json-out[=path] writes the complete response as JSON to a file (bare: a file in the temp directory); standard output stays TOON\n";
 
 export async function main(argv?: string[], ctxFactory: () => Ctx = defaultCtx): Promise<void> {
   const all = argv ?? process.argv.slice(2);
-  const dashdash = all.indexOf("--");
-  const head = dashdash < 0 ? all : all.slice(0, dashdash);
-  if (head.includes("--json")) {
-    const args = [...head.filter((a) => a !== "--json"), ...(dashdash < 0 ? [] : all.slice(dashdash))];
-    return mainJson(args, ctxFactory);
-  }
   const commands: Record<string, (args: string[]) => Promise<unknown>> = {};
   for (const [name, sub] of Object.entries(SINGLE)) {
-    commands[name] = async (args) => (args.includes("--help") ? renderHelp(sub.spec) : sub.run(ctxFactory(), args));
+    commands[name] = async (args) => runSub(name, sub, args, ctxFactory, takesJsonOut(name), isLocal(name));
   }
   for (const [name, subs] of Object.entries(GROUPS)) {
     commands[name] = async (args) => {
@@ -249,7 +232,7 @@ export async function main(argv?: string[], ctxFactory: () => Ctx = defaultCtx):
       if (subName === undefined) throw usage(`\`${name}\` needs a subcommand: ${Object.keys(subs).join(", ")}`, subList(name));
       const sub = subs[subName];
       if (!sub) throw usage(`unknown subcommand ${JSON.stringify(subName)} for \`${name}\`; valid: ${Object.keys(subs).join(", ")}`, subList(name));
-      return rest.includes("--help") ? renderHelp(sub.spec) : sub.run(ctxFactory(), rest);
+      return runSub(`${name}-${subName}`, sub, rest, ctxFactory, takesJsonOut(name, subName), isLocal(name));
     };
   }
   const args = all;
@@ -274,6 +257,13 @@ export async function main(argv?: string[], ctxFactory: () => Ctx = defaultCtx):
       const e = err as { message?: string; code?: string; suggestions?: string[] };
       const out: Record<string, unknown> = { error: e.message ?? String(err), code: e.code ?? "internal" };
       if (e.suggestions?.length) out.help = e.suggestions;
+      const jo = (err as { jsonOut?: { wrote: string; hint: string } }).jsonOut;
+      if (jo) {
+        const prior = (out.help as string[] | undefined) ?? [];
+        delete out.help;
+        out.wrote = jo.wrote;
+        out.help = [...prior, jo.hint];
+      }
       return { output: encode(out) + "\n", exitCode: exitCodeFor(err) };
     },
   });

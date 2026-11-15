@@ -9,7 +9,6 @@ import { expect } from "../client.js";
 import { failure, usage } from "../errors.js";
 import { chooseAccount, type Ctx } from "../context.js";
 import { acctFlag } from "./read.js";
-import { output } from "../output.js";
 
 type Obj = Record<string, unknown>;
 const ACCOUNT = { type: "string" as const, value: "<name>", desc: "the account (required when there are several)" };
@@ -65,10 +64,7 @@ export async function authLink(ctx: Ctx, args: string[], write: (s: string) => v
   const d = ctx.daemon(account);
   let shown = false;
   for await (const line of d.stream("/v1/link", signal, { method: "POST", body: phone ? { phone } : { qr: true }, endOk: true })) {
-    if (output.json) write(`${JSON.stringify(line)}\n`);
-    if (output.json && line.result === undefined) {
-      shown = true;
-    } else if (typeof line.code === "string") {
+    if (typeof line.code === "string") {
       write(`${encode({ code: line.code, help: [WHERE_TO_TYPE, "Waiting for the phone..."] })}\n`);
       shown = true;
     } else if (typeof line.qr === "string") {

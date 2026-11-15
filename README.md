@@ -13,8 +13,9 @@ currently holds the specs, the plans, a build skeleton for both halves and the r
 - A **CLI** for agents and people, written in TypeScript on
   [axi-sdk-js](https://www.npmjs.com/package/axi-sdk-js), that talks only to the local daemon and
   prints token-efficient [TOON](https://toonformat.dev/) output following the AXI conventions,
-  or with `--json` on any command one JSON document for scripts (the daemon's answer unchanged;
-  a stream such as `events --follow` prints one JSON object per line).
+  with `--json-out[=path]` for scripts: standard output stays TOON, and the daemon's complete
+  response body is also written to an owner-only JSON file (a stream such as `events --follow`
+  appends one JSON object per line).
 - Configurable **scopes** that decide what the daemon keeps for an account (for example, only
   messages that mention the account in a group).
 
