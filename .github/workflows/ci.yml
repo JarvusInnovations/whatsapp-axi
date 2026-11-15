@@ -76,7 +76,7 @@ jobs:
         run: npm run build
 
       - name: The skill is current with the command reference
-        run: npm run build:skill -- --check
+        run: npm run docs:check
 
       - uses: actions/setup-go@v7
         with:

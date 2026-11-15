@@ -41,7 +41,7 @@ func leavesNoTrace(t *testing.T, phase string) {
 	d.fake.SetGroup(group, client.GroupInfo{Name: "Example group", Participants: []client.Participant{
 		{JID: ownLID, LID: ownLID, PN: ownPN}, {JID: samLID, LID: samLID, PN: samPN},
 	}})
-	d.patch(`{"wake_file":"` + wake + `","operators":["+15550100001"]}`)
+	d.patch(`{"wake_file":"` + wake + `","operators":["+15550100001"],"confirm":true}`)
 
 	// Kept content, so that every request has something to return.
 	kept := d.emit(msg("@Example kept text", mention))

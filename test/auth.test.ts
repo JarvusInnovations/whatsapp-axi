@@ -22,11 +22,11 @@ describe("auth link", () => {
   it("interrupted before the phone completes it is a failure, never a success", async () => {
     fake.route("POST /v1/link", () => ({ lines: [{ code: "ABCD-EFGH" }] }));
     const { authLink } = await import("../src/commands/auth.js");
-    const { defaultCtx } = await import("../src/context.js");
+    const { testCtx } = await import("./helpers.js");
     const { exitCodeFor } = await import("../src/errors.js");
     const ac = new AbortController();
-    const err = (await authLink(defaultCtx(), ["--phone", "+15550100000"], () => ac.abort(), ac.signal).catch((e) => e)) as { code: string; suggestions: string[] };
-    expect(err.code).toBe("link_interrupted");
+    const err = (await authLink(testCtx(), ["--phone", "+15550100000"], () => ac.abort(), ac.signal).catch((e) => e)) as { code: string; suggestions: string[] };
+    expect(err.code).toBe("LINK_INTERRUPTED");
     expect(exitCodeFor(err)).toBe(1);
     expect(err.suggestions[0]).toContain("whatsapp-axi auth link --phone +15550100000");
   });
@@ -37,14 +37,14 @@ describe("auth link", () => {
     expect(r.code, r.out).toBe(0);
     expect(r.out).toContain("code: ABCD-EFGH");
     expect(r.out).toContain("Link with phone number instead");
-    expect(r.out).toContain("linked: true");
+    expect(r.out).toContain("action: linked");
     expect(r.out).toContain("state: connected");
     expect(r.out).toContain("phone: +15550100000");
     const seen = fake.seen.find((s) => s.path === "/v1/link");
     expect(seen?.method).toBe("POST");
     expect(seen?.body).toEqual({ phone: "+15550100000" });
     // The code is printed before the result.
-    expect(r.out.indexOf("ABCD-EFGH")).toBeLessThan(r.out.indexOf("linked: true"));
+    expect(r.out.indexOf("ABCD-EFGH")).toBeLessThan(r.out.indexOf("action: linked"));
   });
 
   it("renders each QR code and prints its raw string", async () => {
@@ -59,33 +59,33 @@ describe("auth link", () => {
 
   it("refuses a pairing by a different number with its own code", async () => {
     fake.route("POST /v1/link", () => ({
-      lines: [{ code: "ABCD-EFGH" }, { result: { linked: false, state: "unlinked", error: { code: "wrong_number", message: "The phone that completed the link is not the number given to auth link, so the pairing was refused." } } }],
+      lines: [{ code: "ABCD-EFGH" }, { result: { linked: false, state: "unlinked", error: { code: "WRONG_NUMBER", message: "The phone that completed the link is not the number given to auth link, so the pairing was refused." } } }],
       end: true,
     }));
     const r = await run(["auth", "link", "--phone", "+15550100000"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: wrong_number");
+    expect(r.out).toContain("code: WRONG_NUMBER");
     expect(r.out).toContain("pairing was refused");
     expect(r.out).toContain("help");
   });
 
   it("reports a closed window with the command to try again", async () => {
-    fake.route("POST /v1/link", () => ({ lines: [{ code: "ABCD-EFGH" }, { result: { linked: false, state: "unlinked", error: { code: "link_timeout", message: "The link window closed before the phone completed the link." } } }], end: true }));
+    fake.route("POST /v1/link", () => ({ lines: [{ code: "ABCD-EFGH" }, { result: { linked: false, state: "unlinked", error: { code: "LINK_TIMEOUT", message: "The link window closed before the phone completed the link." } } }], end: true }));
     const r = await run(["auth", "link", "--phone", "+15550100000"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: link_timeout");
+    expect(r.out).toContain("code: LINK_TIMEOUT");
     expect(r.out).toContain("whatsapp-axi auth link --phone +15550100000");
   });
 
   it("passes on the daemon's refusals before the stream starts", async () => {
-    fake.route("POST /v1/link", () => apiError(409, "link_in_progress", "A link attempt is already running for this account.", { state: "linking" }));
+    fake.route("POST /v1/link", () => apiError(409, "LINK_IN_PROGRESS", "A link attempt is already running for this account.", { state: "linking" }));
     let r = await run(["auth", "link", "--qr"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: link_in_progress");
+    expect(r.out).toContain("code: LINK_IN_PROGRESS");
     expect(r.out).toContain("Wait for the running link attempt");
-    fake.route("POST /v1/link", () => apiError(400, "bad_request", "The account is already linked (state connected). Run auth logout first to link it again.", { state: "connected" }));
+    fake.route("POST /v1/link", () => apiError(400, "VALIDATION_ERROR", "The account is already linked (state connected). Run auth logout first to link it again.", { state: "connected" }));
     r = await run(["auth", "link", "--qr"]);
-    expect(r.code).toBe(1);
+    expect(r.code).toBe(2);
     expect(r.out).toContain("already linked");
   });
 
@@ -93,11 +93,11 @@ describe("auth link", () => {
     fake.route("POST /v1/link", () => ({ lines: [{ code: "ABCD-EFGH" }], end: true }));
     let r = await run(["auth", "link", "--phone", "+15550100000"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: stream_closed");
+    expect(r.out).toContain("code: STREAM_CLOSED");
     fake.route("POST /v1/link", () => ({ lines: [{ what: 1 }], end: true }));
     r = await run(["auth", "link", "--phone", "+15550100000"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: bad_response");
+    expect(r.out).toContain("code: UNEXPECTED_RESPONSE");
   });
 
   it("validates its flags before calling the daemon", async () => {
@@ -112,7 +112,7 @@ describe("auth link", () => {
     await fake.close();
     const r = await run(["auth", "link", "--qr"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("daemon_not_running");
+    expect(r.out).toContain("DAEMON_NOT_RUNNING");
   });
 });
 
@@ -120,30 +120,32 @@ describe("auth logout", () => {
   it("needs --confirm, then logs out", async () => {
     let r = await run(["auth", "logout"]);
     expect(r.code).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
     fake.route("POST /v1/logout", () => ({ body: { logged_out: true, state: "unlinked" } }));
     r = await run(["auth", "logout", "--confirm"]);
     expect(r.code, r.out).toBe(0);
-    expect(r.out).toContain("logged_out: true");
+    expect(r.out).toContain("action: unlinked");
     expect(r.out).toContain("auth link");
   });
 
   it("is a no-op when already unlinked", async () => {
-    fake.route("POST /v1/logout", () => apiError(409, "not_linked", "Logging out needs a linked account; this one has no session (state unlinked).", { state: "unlinked" }));
+    fake.route("POST /v1/logout", () => apiError(409, "NOT_LINKED", "Logging out needs a linked account; this one has no session (state unlinked).", { state: "unlinked" }));
     const r = await run(["auth", "logout", "--confirm"]);
     expect(r.code).toBe(0);
+    expect(r.out).toContain("action: unchanged");
     expect(r.out).toContain("already unlinked (no-op)");
   });
 
   it("passes on not_connected and WhatsApp errors", async () => {
-    fake.route("POST /v1/logout", () => apiError(409, "not_connected", "Logging out needs a live connection to WhatsApp; the account is connecting.", { state: "connecting" }));
+    fake.route("POST /v1/logout", () => apiError(409, "NOT_CONNECTED", "Logging out needs a live connection to WhatsApp; the account is connecting.", { state: "connecting" }));
     let r = await run(["auth", "logout", "--confirm"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: not_connected");
+    expect(r.out).toContain("code: NOT_CONNECTED");
     expect(r.out).toContain("doctor");
-    fake.route("POST /v1/logout", () => apiError(502, "whatsapp_error", "WhatsApp did not accept the logout; the device is still linked."));
+    fake.route("POST /v1/logout", () => apiError(502, "UPSTREAM_ERROR", "WhatsApp did not accept the logout; the device is still linked."));
     r = await run(["auth", "logout", "--confirm"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: whatsapp_error");
+    expect(r.out).toContain("code: UPSTREAM_ERROR");
   });
 });
 
@@ -158,14 +160,14 @@ describe("doctor link and state checks", () => {
     const r = await run(["doctor"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("example,link,fail,not linked to WhatsApp");
-    expect(r.out).toContain("whatsapp-axi auth link --phone <number> --account example");
+    expect(r.out).toContain("Run `whatsapp-axi auth link --phone <number>` to fix link of example");
   });
 
   it("says what happened and what to do for each stopped state", async () => {
     const cases: Record<string, string> = {
       logged_out: "auth link --phone <number>",
-      outdated: "whatsapp-axi daemon upgrade",
-      suspended: "wait for the expiry",
+      outdated: "only a release built on a newer library",
+      suspended: "restart after the expiry",
     };
     for (const [state, fix] of Object.entries(cases)) {
       fake.route("GET /v1/status", () => ({ body: { ...STATUS, state, reason: `reason of ${state}`, me: state === "logged_out" ? null : STATUS.me } }));

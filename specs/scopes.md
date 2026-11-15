@@ -208,3 +208,13 @@ lookup of kept message ids. It is tested without any WhatsApp connection.
   out.
 - **The live check.** The pilot procedure repeats the marker test against a real account, and its
   search includes `session.db`, since unit tests cannot exercise the library's own writes.
+
+## Principles
+
+**Inherited** ([principles.md](principles.md)):
+
+- *The daemon decides what is kept*.
+- *Say exactly what is promised*: the discard guarantee and what it does not cover.
+- *Modest by default, loosened on purpose*: `tagged` by default; `full` takes `--confirm`.
+
+**Local:** none.

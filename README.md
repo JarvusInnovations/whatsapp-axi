@@ -58,7 +58,7 @@ The ids below are invented.
 whatsapp-axi account add example                 # create the account's files (scope: tagged)
 whatsapp-axi daemon install example              # install and start its daemon as a service
 whatsapp-axi auth link --phone +15550100001      # prints a pairing code to type on the phone
-whatsapp-axi operators add +15550100002          # whose direct messages are kept
+whatsapp-axi operators add +15550100002 --confirm  # whose direct messages are kept
 whatsapp-axi                                     # home view: accounts, state, scope
 ```
 
@@ -69,6 +69,7 @@ whatsapp-axi events --after 0 --limit 20         # what was kept; the last line 
 whatsapp-axi events --after 412 --follow         # stream new events
 whatsapp-axi read 120363000000000001@g.us --mark-read
 whatsapp-axi send 120363000000000001@g.us "On it" --reply 3EB0AAAA0000000001
+whatsapp-axi send 120363000000000001@g.us "Done" --id 3EB0C0FFEE0000000001  # safe to retry
 whatsapp-axi send +15550100003 "Hello" --first-contact
 ```
 
@@ -89,9 +90,38 @@ whatsapp-axi events --after 0 --json-out=/tmp/events.json
 jq '.events[]' /tmp/events.json
 ```
 
+With several accounts, reads use the default set by `whatsapp-axi account use <name>`, and a
+command that changes anything needs `--account <name>` (or `WHATSAPP_AXI_ACCOUNT` set for the
+session). Every output starts with the `account:` it acted on. Errors carry an `UPPER_SNAKE`
+`code`; usage errors exit 2, failures 1.
+
 `whatsapp-axi --help` lists every command, and `<command> --help` shows its flags. For agents,
 `whatsapp-axi setup hooks` installs a session-start hook, and
 [`skills/whatsapp-axi/`](skills/whatsapp-axi/SKILL.md) is an installable skill.
+
+## Upgrading an earlier checkout
+
+**Accounts moved under `accounts/`.** An account's settings are now at
+`<config>/accounts/<name>/` and its session, store and media at `<state>/accounts/<name>/`
+(`<config>` is `~/.config/whatsapp-axi`, `<state>` is `~/.local/state/whatsapp-axi`); the default
+account is `<config>/config.json`. An account in the old place, directly under those
+directories, is not used and is not moved by itself: `doctor` reports it with the command that
+moves it. For each account:
+
+```sh
+whatsapp-axi daemon stop example        # migrate refuses while the account's daemon runs
+whatsapp-axi account migrate example    # moves both directories, keeping their modes
+whatsapp-axi daemon upgrade             # installs this build's daemon and restarts the services
+whatsapp-axi daemon start example       # only if upgrade said the binary was already current
+whatsapp-axi doctor
+```
+
+The service unit does not change: its environment and `ExecStart` name the XDG directories and
+the account, not the account's directory. Any other copy of the CLI on the machine must be
+updated at the same time, since an older CLI looks for accounts in the old place.
+
+Two other changes for scripts: error codes are `UPPER_SNAKE` (`bad_request` is now
+`VALIDATION_ERROR`, `internal` is `INTERNAL_ERROR`), and `operators add` takes `--confirm`.
 
 ## Unofficial client: read this first
 
@@ -114,8 +144,8 @@ or abusive. Use a number you can afford to lose, and keep volumes human.
 
 Toolchain versions are pinned in `.tool-versions` (asdf). Build the daemon with `npm run build:daemon`,
 not a plain `go build`: the script stamps the version from `package.json`, which the CLI and
-`doctor` compare with their own. An unstamped build reports `0.0.0-dev` and `doctor` warns of a
-version mismatch.
+`doctor` compare with their own. An unstamped build reports `0.0.0-dev` and `doctor` fails the
+versions check.
 
 ```sh
 # daemon
@@ -123,7 +153,7 @@ cd daemon && go vet ./... && go test ./... && cd ..
 npm run build:daemon   # daemon/bin/whatsapp-axid, stamped with the version in package.json
 
 # CLI
-npm ci && npm run lint && npm run typecheck && npm run build && npm test
+npm ci && npm run lint && npm run typecheck && npm run build && npm test && npm run docs:check
 ```
 
 ## Licence

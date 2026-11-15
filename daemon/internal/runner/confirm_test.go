@@ -7,7 +7,7 @@ import (
 
 // TestConfirmRequiredAtTheSocket: a settings change that widens what the account reads or
 // loosens a send safeguard is refused without confirm: true, whoever sends it; tightening and
-// no-ops need nothing (specs/cli.md "What needs --confirm").
+// no-ops need nothing (specs/conventions.md "The gate inventory").
 func TestConfirmRequiredAtTheSocket(t *testing.T) {
 	e := newEnv(t)
 	e.init()
@@ -21,10 +21,13 @@ func TestConfirmRequiredAtTheSocket(t *testing.T) {
 		`{"send":{"per_minute":11}}`,
 		`{"send":{"same_text_chats":4}}`,
 		`{"send":{"max_file_mb":65}}`,
+		`{"retain_days":91}`,
+		`{"retain_days":0}`,
+		`{"operators":["+15550100001"]}`,
 		`{"send":{"per_hour":61},"confirm":false}`,
 	}
 	for _, body := range loosening {
-		e := d.wantError("PATCH", "/v1/settings", body, 409, "confirm_required")
+		e := d.wantError("PATCH", "/v1/settings", body, 409, "CONFIRM_REQUIRED")
 		if !strings.Contains(e["message"].(string), "confirm: true") {
 			t.Fatalf("%s: %v", body, e)
 		}
@@ -45,7 +48,7 @@ func TestConfirmRequiredAtTheSocket(t *testing.T) {
 		t.Fatalf("a refused change was written: %+v", s.Settings)
 	}
 	// With confirm each goes through.
-	for _, body := range loosening[:8] {
+	for _, body := range loosening[:len(loosening)-1] {
 		d.patch(strings.TrimSuffix(body, "}") + `,"confirm":true}`)
 	}
 	// Tightening, a no-op and unrelated settings need nothing.
@@ -54,8 +57,10 @@ func TestConfirmRequiredAtTheSocket(t *testing.T) {
 		`{"dm_from":"operators","scope":"tagged","chats":{"` + group + `":"none"}}`,
 		`{"scope":"tagged"}`,
 		`{"presence":false,"read_receipts":"off"}`,
+		`{"retain_days":30}`,
+		`{"operators":[]}`,
 	} {
 		d.patch(body)
 	}
-	d.wantError("PATCH", "/v1/settings", `{"confirm":"yes"}`, 400, "bad_request")
+	d.wantError("PATCH", "/v1/settings", `{"confirm":"yes"}`, 400, "VALIDATION_ERROR")
 }

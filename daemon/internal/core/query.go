@@ -71,7 +71,7 @@ func (a *Account) canonicalChatKey(ctx context.Context, ref string) (string, err
 		return id, nil
 	}
 	var ae *APIError
-	if !errors.As(err, &ae) || ae.Code != "not_found" {
+	if !errors.As(err, &ae) || ae.Code != "NOT_FOUND" {
 		return "", err
 	}
 	switch {
@@ -299,7 +299,7 @@ func (a *Account) Chat(ctx context.Context, ref string) (*ChatDetail, error) {
 			st, _, _ := a.State()
 			switch {
 			case errors.Is(err, client.ErrNotConnected):
-				return nil, &APIError{Status: http.StatusConflict, Code: "not_connected", Message: "The participant list of a group needs a live connection to WhatsApp.", State: st}
+				return nil, &APIError{Status: http.StatusConflict, Code: "NOT_CONNECTED", Message: "The participant list of a group needs a live connection to WhatsApp.", State: st}
 			case errors.Is(err, client.ErrNoGroup):
 				return nil, notFound("The account is not a member of %s, and nothing from it is kept.", id)
 			}
@@ -333,7 +333,7 @@ func (a *Account) Chat(ctx context.Context, ref string) (*ChatDetail, error) {
 
 func isNotFound(err error) bool {
 	var ae *APIError
-	return errors.As(err, &ae) && ae.Code == "not_found"
+	return errors.As(err, &ae) && ae.Code == "NOT_FOUND"
 }
 
 func firstNonEmpty(v ...string) string {
@@ -348,6 +348,8 @@ func firstNonEmpty(v ...string) string {
 // EventQuery selects events.
 type EventQuery struct {
 	After *int64
+	// Since keeps events kept at or after this instant (milliseconds), when set.
+	Since *int64
 	Limit int
 	Chat  string // resolved chat id, "" for all
 	Kind  string
@@ -368,6 +370,10 @@ func eventWhere(q EventQuery) (string, []any) {
 	if q.After != nil {
 		where = append(where, "e.seq>?")
 		args = append(args, *q.After)
+	}
+	if q.Since != nil {
+		where = append(where, "e.t>=?")
+		args = append(args, *q.Since)
 	}
 	return strings.Join(where, " AND "), args
 }
@@ -631,7 +637,7 @@ func (a *Account) resolveMessage(ctx context.Context, chatRef, id string) (strin
 	for i, c := range chats {
 		cands[i] = c + "/" + id
 	}
-	return "", &APIError{Status: http.StatusConflict, Code: "ambiguous", Message: fmt.Sprintf("Message id %s is kept in %d chats; use <chat>/<id>.", id, len(chats)), Candidates: cands}
+	return "", &APIError{Status: http.StatusConflict, Code: "AMBIGUOUS", Message: fmt.Sprintf("Message id %s is kept in %d chats; use <chat>/<id>.", id, len(chats)), Candidates: cands}
 }
 
 // Message returns one kept message.
@@ -734,7 +740,7 @@ func (a *Account) Forget(ctx context.Context, chatRef, id string) (*ForgetResult
 		}
 	}
 	if failed > 0 {
-		return nil, &APIError{Status: http.StatusInternalServerError, Code: "internal", Message: fmt.Sprintf("Nothing was forgotten: %d downloaded media file(s) could not be removed; see the daemon's log, then run forget again.", failed)}
+		return nil, &APIError{Status: http.StatusInternalServerError, Code: "INTERNAL_ERROR", Message: fmt.Sprintf("Nothing was forgotten: %d downloaded media file(s) could not be removed; see the daemon's log, then run forget again.", failed)}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -880,7 +886,7 @@ func (a *Account) PatchSettings(ctx context.Context, body []byte) (*SettingsResu
 		return nil, badRequest("%s", err.Error())
 	}
 	if loosened := Loosens(a.settings, next); len(loosened) > 0 && !confirm {
-		return nil, conflict("confirm_required", "", "This change widens what the account reads or loosens a send safeguard (%s); send it with confirm: true.", strings.Join(loosened, ", "))
+		return nil, conflict("CONFIRM_REQUIRED", "", "This change widens what the account reads or keeps, or loosens a send safeguard (%s); send it with confirm: true.", strings.Join(loosened, ", "))
 	}
 	changed := !settings.Equal(next, a.settings)
 	if changed {
@@ -892,8 +898,9 @@ func (a *Account) PatchSettings(ctx context.Context, body []byte) (*SettingsResu
 }
 
 // Loosens lists what a change from prev to next widens or loosens, each needing confirm
-// (specs/cli.md "What needs --confirm"): scope full (the account's or a chat's), dm_from anyone,
-// send.first_contact allow, and raising a send limit above its current value. Tightening, and
+// (specs/conventions.md "The gate inventory"): scope full (the account's or a chat's), dm_from
+// anyone, send.first_contact allow, raising a send limit above its current value, raising the
+// effective retain_days or making it unlimited, and adding an operator. Tightening, and
 // setting a value already in place, needs nothing.
 func Loosens(prev, next settings.Settings) []string {
 	var out []string
@@ -925,6 +932,24 @@ func Loosens(prev, next settings.Settings) []string {
 	} {
 		if l.next > l.prev {
 			out = append(out, fmt.Sprintf("raising %s from %d to %d", l.key, l.prev, l.next))
+		}
+	}
+	// Keeping other people's messages longer: a higher effective retention, or unlimited (0).
+	if p, n := prev.EffectiveRetainDays(), next.EffectiveRetainDays(); p != 0 && (n == 0 || n > p) {
+		if n == 0 {
+			out = append(out, fmt.Sprintf("raising retain_days from %d to unlimited", p))
+		} else {
+			out = append(out, fmt.Sprintf("raising retain_days from %d to %d", p, n))
+		}
+	}
+	// A new operator: under dm_from operators it widens whose direct messages are kept.
+	had := map[string]bool{}
+	for _, o := range prev.Operators {
+		had[o] = true
+	}
+	for _, o := range next.Operators {
+		if !had[o] {
+			out = append(out, "operators add "+o)
 		}
 	}
 	return out

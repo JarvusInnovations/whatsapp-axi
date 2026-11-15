@@ -15,7 +15,7 @@ export function unitName(account: string): string {
 
 /** Where the user's units live: $XDG_CONFIG_HOME/systemd/user. */
 export function unitDir(r: Roots): string {
-  return join(dirname(r.config), "systemd", "user");
+  return join(r.xdgConfig, "systemd", "user");
 }
 
 /** The stable path service units run the daemon from (never a package directory). */
@@ -41,7 +41,8 @@ export function unitText(r: Roots): string {
     "",
     "[Service]",
     "Type=simple",
-    `Environment=${q(`XDG_CONFIG_HOME=${dirname(r.config)}`)}`,
+    `Environment=${q(`XDG_CONFIG_HOME=${r.xdgConfig}`)}`,
+    ...(r.configFromEnv ? [`Environment=${q(`WHATSAPP_AXI_CONFIG_DIR=${r.configFromEnv}`)}`] : []),
     `Environment=${q(`XDG_STATE_HOME=${dirname(r.state)}`)}`,
     `Environment=${q(`XDG_DATA_HOME=${dirname(r.data)}`)}`,
     `ExecStart=${q(installedBinary(r))} run --account %i`,

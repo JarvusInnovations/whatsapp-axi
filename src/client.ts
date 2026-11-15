@@ -1,19 +1,11 @@
 // The socket client (specs/socket-protocol.md): HTTP/1.1 with JSON over the account's Unix socket.
 // Every failure becomes a structured error; nothing here ever turns a failed read into an empty one.
 import { request } from "node:http";
-import { failure } from "./errors.js";
-import { appendLine, output } from "./output.js";
-import { accountPaths, roots } from "./paths.js";
+import { ToolError, failure } from "./errors.js";
+import { appendLine, output } from "./output/jsonout.js";
 import { VERSION } from "./version.js";
 
 export const PROTOCOL = 1;
-
-/** Fix commands named in errors: the service start (daemon start says how to install it). */
-export function startCommand(account: string): string {
-  return `whatsapp-axi daemon start ${account}`;
-}
-
-const REQUEST_TIMEOUT_MS = 30_000;
 
 /** The daemon's send timeout when its status does not say (core.SendTimeout). */
 export const DEFAULT_SEND_TIMEOUT_S = 600;
@@ -37,83 +29,110 @@ export interface Status {
 
 type Json = Record<string, unknown>;
 
-function notRunning(account: string) {
-  return failure(`The daemon of account ${account} is not running.`, "daemon_not_running", [
-    `Run \`${startCommand(account)}\` to start it (\`whatsapp-axi daemon install ${account}\` first if it is not installed as a service)`,
-  ]);
+/** The fix command named when a daemon is not running. */
+export function startCommand(account: string): string {
+  return `whatsapp-axi daemon start ${account}`;
 }
 
-function badResponse(account: string, what: string) {
-  return failure(`The daemon of account ${account} gave an answer that could not be read (${what}).`, "bad_response", [
-    `Run \`whatsapp-axi doctor --account ${account}\` to check the daemon`,
-  ]);
-}
-
-function helpForCode(account: string, code: string, body: Json, chat?: string): string[] {
-  switch (code) {
-    case "not_found":
-      return [`Run \`whatsapp-axi chats --account ${account}\` to see the kept chats`];
-    case "ambiguous": {
-      const c = Array.isArray(body.candidates) ? (body.candidates as unknown[]).map(String) : [];
-      return c.length ? [`Use one of: ${c.join(", ")}`] : [];
-    }
-    case "not_connected":
-      return [`Run \`whatsapp-axi doctor --account ${account}\` to see the account's state`];
-    case "not_linked":
-      return [`Run \`whatsapp-axi auth link --phone <number> --account ${account}\` to link the account`];
-    case "first_contact":
-      return ["Nothing has been received from or sent to this chat. Add --first-contact if you mean to message it for the first time"];
-    case "rate_limited": {
-      const s = typeof body.retry_after_seconds === "number" ? body.retry_after_seconds : undefined;
-      return [`Wait${s ? ` ${s} seconds` : ""} and try again; the limits are \`send.per_minute\` and \`send.per_hour\` (\`whatsapp-axi settings show --account ${account}\`)`];
-    }
-    case "duplicate_text":
-      return ["The same text went to too many chats in ten minutes (`send.same_text_chats`); vary the text or wait"];
-    case "not_downloadable":
-      return ["The media cannot be fetched: it is missing, view-once, or expired on WhatsApp's servers"];
-    case "outcome_unknown":
-      return [outcomeHelp(account, chat)];
-    case "link_in_progress":
-      return ["Wait for the running link attempt to end (it lasts at most about three minutes)"];
-    case "internal":
-      return [`Check the daemon's log; run \`whatsapp-axi doctor --account ${account}\``];
-    default:
-      return [];
-  }
-}
-
-function outcomeHelp(account: string, chat: string | undefined): string {
-  return `Run \`whatsapp-axi read ${chat ?? "<chat>"} --account ${account}\` to check whether it went out before sending again: a retry may duplicate it`;
-}
-
-/** A send the CLI stopped waiting for: it may have gone out. */
-function outcomeUnknown(account: string, chat: string | undefined, why: string) {
-  return failure(`The daemon of account ${account} did not answer the send (${why}); it may have gone out.`, "outcome_unknown", [outcomeHelp(account, chat)]);
-}
-
-function connError(account: string, err: NodeJS.ErrnoException) {
-  if (["ENOENT", "ECONNREFUSED", "ENOTSOCK", "ECONNRESET", "EPIPE"].includes(err.code ?? "")) return notRunning(account);
-  return failure(`Cannot reach the daemon of account ${account} (${err.code ?? err.message}).`, "daemon_unreachable", [
-    `Run \`whatsapp-axi doctor --account ${account}\``,
-  ]);
+/** A send's retry command with its id, filled in by the send command. */
+export interface SendContext {
+  chat?: string;
+  /** The full command to run again with the same --id. */
+  retry?: string;
+  id?: string;
 }
 
 export class Daemon {
   readonly account: string;
   readonly socket: string;
+  /** " --account <name>" when the user has several accounts, for hints. */
+  readonly af: string;
   private checked: Status | undefined;
-
   private readonly timeoutMs: number;
+  /** Whether the timeout is the read deadline (named in TIMEOUT), or a probe's short budget. */
+  private readonly readDeadline: boolean;
   /** Added to the daemon's send timeout (tests shorten it). */
   sendMarginMs = SEND_MARGIN_MS;
 
-  constructor(account: string, socket = accountPaths(account, roots()).socket, timeoutMs = REQUEST_TIMEOUT_MS) {
+  constructor(account: string, socket: string, timeoutMs = 30_000, af = "", readDeadline = true) {
     this.account = account;
     this.socket = socket;
     this.timeoutMs = timeoutMs;
+    this.af = af;
+    this.readDeadline = readDeadline;
   }
 
-  private raw(method: string, path: string, body?: unknown, send?: { chat?: string; timeoutMs: number }): Promise<{ status: number; json: Json }> {
+  private doctor(): string {
+    return `Run \`whatsapp-axi doctor${this.af}\` to check the daemon`;
+  }
+
+  notRunning(): ToolError {
+    return failure(`The daemon of account ${this.account} is not running.`, "DAEMON_NOT_RUNNING", [
+      `Run \`${startCommand(this.account)}\` to start it as a service`,
+      `Run \`whatsapp-axi daemon run ${this.account}\` to run it in the foreground instead`,
+    ]);
+  }
+
+  badResponse(what: string): ToolError {
+    return failure(`The daemon of account ${this.account} gave an answer that could not be used (${what}).`, "UNEXPECTED_RESPONSE", [this.doctor()]);
+  }
+
+  private connError(err: NodeJS.ErrnoException): ToolError {
+    if (["ENOENT", "ECONNREFUSED", "ENOTSOCK"].includes(err.code ?? "")) return this.notRunning();
+    return failure(`Cannot reach the daemon of account ${this.account} (${err.code ?? err.message}).`, "DAEMON_UNREACHABLE", [this.doctor()]);
+  }
+
+  private outcomeHelp(s: SendContext): string[] {
+    const chat = s.chat ?? "<chat>";
+    const help = [`Run \`whatsapp-axi read ${chat}${this.af}\` to check whether it went out before sending again`];
+    if (s.retry) help.push(`Run \`${s.retry}\` to retry safely: a send with the same --id is never sent twice`);
+    return help;
+  }
+
+  /** A send the CLI stopped waiting for: it may have gone out. */
+  private outcomeUnknown(s: SendContext, why: string): ToolError {
+    const id = s.id ? ` (id ${s.id})` : "";
+    return failure(`The daemon of account ${this.account} did not answer the send${id} (${why}); it may have gone out.`, "OUTCOME_UNKNOWN", this.outcomeHelp(s));
+  }
+
+  private helpForCode(code: string, body: Json, send?: SendContext): string[] {
+    const af = this.af;
+    switch (code) {
+      case "NOT_FOUND":
+        return [`Run \`whatsapp-axi chats${af}\` to see the kept chats`];
+      case "AMBIGUOUS": {
+        const c = Array.isArray(body.candidates) ? (body.candidates as unknown[]).map(String) : [];
+        return c.length ? c.map((x) => `Use ${x}`) : [];
+      }
+      case "NOT_CONNECTED":
+        return [`Run \`whatsapp-axi doctor${af}\` to see the account's state`];
+      case "NOT_LINKED":
+        return [`Run \`whatsapp-axi auth link --phone <number>${af}\` to link the account`];
+      case "FIRST_CONTACT":
+        return send?.retry
+          ? [`Run \`${send.retry.replace(/ --id \S+/, "")} --first-contact\` if you mean to message this chat for the first time`]
+          : ["Add --first-contact if you mean to message this chat for the first time"];
+      case "RATE_LIMITED": {
+        const s = typeof body.retry_after_seconds === "number" ? body.retry_after_seconds : undefined;
+        return [`Wait${s ? ` ${s} seconds` : ""} and run the same command again`, `Run \`whatsapp-axi settings show${af}\` to see the limits (send.per_minute, send.per_hour)`];
+      }
+      case "DUPLICATE_TEXT":
+        return ["The same text went to too many chats in ten minutes (send.same_text_chats): vary the text or wait", `Run \`whatsapp-axi settings show${af}\` to see the limit`];
+      case "NOT_DOWNLOADABLE":
+        return ["The media cannot be fetched: it is missing, view-once, or expired on WhatsApp's servers"];
+      case "OUTCOME_UNKNOWN":
+        return this.outcomeHelp(send ?? {});
+      case "LINK_IN_PROGRESS":
+        return ["Wait for the running link attempt to end (at most about three minutes), then run it again"];
+      case "INTERNAL_ERROR":
+      case "UPSTREAM_ERROR":
+        return [`Run \`whatsapp-axi daemon logs ${this.account}\` to see the daemon's log`, this.doctor()];
+      default:
+        return [];
+    }
+  }
+
+  private raw(method: string, path: string, body?: unknown, send?: SendContext & { timeoutMs: number }): Promise<{ status: number; json: Json }> {
     return new Promise((resolve, reject) => {
       let written = false;
       const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
@@ -132,18 +151,18 @@ export class Daemon {
         (res) => {
           const chunks: Buffer[] = [];
           res.on("data", (c: Buffer) => chunks.push(c));
-          res.on("error", (e) => reject(send ? outcomeUnknown(this.account, send.chat, "the answer was cut off") : connError(this.account, e)));
+          res.on("error", (e) => reject(send ? this.outcomeUnknown(send, "the answer was cut off") : this.connError(e)));
           res.on("end", () => {
             const text = Buffer.concat(chunks).toString("utf-8");
             let json: unknown;
             try {
               json = JSON.parse(text);
             } catch {
-              reject(badResponse(this.account, "not JSON"));
+              reject(send && res.statusCode === 200 ? this.outcomeUnknown(send, "the answer could not be read") : this.badResponse("not JSON"));
               return;
             }
             if (typeof json !== "object" || json === null || Array.isArray(json)) {
-              reject(badResponse(this.account, "not a JSON object"));
+              reject(this.badResponse("not a JSON object"));
               return;
             }
             resolve({ status: res.statusCode ?? 0, json: json as Json });
@@ -152,13 +171,25 @@ export class Daemon {
       );
       req.on("timeout", () => {
         req.destroy();
-        if (send) reject(outcomeUnknown(this.account, send.chat, `no answer in ${Math.round(send.timeoutMs / 1000)} s`));
-        else reject(failure(`The daemon of account ${this.account} did not answer in time.`, "daemon_timeout", [`Run \`whatsapp-axi doctor --account ${this.account}\``]));
+        if (send) reject(this.outcomeUnknown(send, `no answer in ${Math.round(send.timeoutMs / 1000)} s`));
+        else {
+          const s = Math.round(this.timeoutMs / 100) / 10;
+          reject(
+            failure(
+              `The daemon of account ${this.account} did not answer in ${s} s; the outcome of the read is unknown.`,
+              "TIMEOUT",
+              this.readDeadline
+                ? ["Run the same command again to retry the read", `Set WHATSAPP_AXI_TIMEOUT_MS to wait longer (now ${this.timeoutMs})`, this.doctor()]
+                : [this.doctor()],
+            ),
+          );
+        }
       });
       req.on("error", (e: NodeJS.ErrnoException) => {
         // A send whose request reached the daemon and then lost its connection may have gone out.
-        if (send && written && ["ECONNRESET", "EPIPE"].includes(e.code ?? "")) reject(outcomeUnknown(this.account, send.chat, "the connection was lost"));
-        else reject(connError(this.account, e));
+        if (send && written && ["ECONNRESET", "EPIPE"].includes(e.code ?? "")) reject(this.outcomeUnknown(send, "the connection was lost"));
+        else if (!send && ["ECONNRESET", "EPIPE"].includes(e.code ?? "")) reject(this.notRunning());
+        else reject(this.connError(e));
       });
       req.on("finish", () => {
         written = true;
@@ -168,11 +199,12 @@ export class Daemon {
     });
   }
 
-  private fail(status: number, json: Json, chat?: string): never {
+  private fail(status: number, json: Json, send?: SendContext): never {
     const e = json.error as Json | undefined;
-    if (!e || typeof e.code !== "string" || typeof e.message !== "string") throw badResponse(this.account, `status ${status} without an error body`);
-    const help = helpForCode(this.account, e.code, e, chat);
-    const err = failure(e.message, e.code, help) as ReturnType<typeof failure> & { details?: Json };
+    if (!e || typeof e.code !== "string" || typeof e.message !== "string") throw this.badResponse(`status ${status} without an error body`);
+    let message = e.message;
+    if (e.code === "OUTCOME_UNKNOWN" && send?.id) message = `${message} (id ${send.id})`;
+    const err = new ToolError(message, e.code, this.helpForCode(e.code, e, send));
     err.details = e;
     output.daemonError = e;
     throw err;
@@ -184,13 +216,15 @@ export class Daemon {
     if (status !== 200) this.fail(status, json);
     const s = json as unknown as Status;
     if (typeof s.protocol !== "number" || typeof s.state !== "string" || typeof s.counts !== "object" || s.counts === null) {
-      throw badResponse(this.account, "status is missing fields");
+      throw this.badResponse("status is missing fields");
     }
     if (s.protocol !== PROTOCOL) {
       throw failure(
         `The daemon of account ${this.account} speaks protocol ${s.protocol} (daemon ${s.daemon_version}); this CLI (${VERSION}) speaks protocol ${PROTOCOL}.`,
-        "protocol_mismatch",
-        [s.protocol > PROTOCOL ? "Upgrade the CLI: npm install -g whatsapp-axi@latest" : "Upgrade the daemon to the version that came with this CLI, then restart it"],
+        "PROTOCOL_MISMATCH",
+        s.protocol > PROTOCOL
+          ? ["Run `whatsapp-axi daemon upgrade` to replace the daemon with the one that came with this CLI (or use the CLI that came with the running daemon)"]
+          : ["Run `whatsapp-axi daemon upgrade` to install the daemon that came with this CLI and restart it"],
       );
     }
     this.checked = s;
@@ -216,10 +250,10 @@ export class Daemon {
    * A send, a file or a reaction: waits as long as the daemon's own send timeout allows, plus a
    * margin, never less. When the CLI stops waiting the outcome is unknown, never a plain failure.
    */
-  async send(path: string, body: Json, chat?: string): Promise<Json> {
+  async send(path: string, body: Json, ctx: SendContext = {}): Promise<Json> {
     const st = this.checked ?? (await this.status());
-    const { status, json } = await this.raw("POST", path, body, { chat, timeoutMs: this.sendTimeoutMs(st) });
-    if (status < 200 || status > 299) this.fail(status, json, chat);
+    const { status, json } = await this.raw("POST", path, body, { ...ctx, timeoutMs: this.sendTimeoutMs(st) });
+    if (status < 200 || status > 299) this.fail(status, json, ctx);
     output.body = json;
     return json;
   }
@@ -245,7 +279,7 @@ export class Daemon {
         },
         resolve,
       );
-      req.on("error", (e: NodeJS.ErrnoException) => (e.name === "AbortError" ? resolve(null as never) : reject(connError(this.account, e))));
+      req.on("error", (e: NodeJS.ErrnoException) => (e.name === "AbortError" ? resolve(null as never) : reject(this.connError(e))));
       if (payload) req.write(payload);
       req.end();
     });
@@ -257,7 +291,7 @@ export class Daemon {
       try {
         json = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
       } catch {
-        throw badResponse(this.account, "not JSON");
+        throw this.badResponse("not JSON");
       }
       this.fail(res.statusCode ?? 0, json);
     }
@@ -274,7 +308,7 @@ export class Daemon {
           try {
             obj = JSON.parse(line);
           } catch {
-            throw badResponse(this.account, "a stream line is not JSON");
+            throw this.badResponse("a stream line is not JSON");
           }
           appendLine(obj);
           yield obj as Json;
@@ -284,14 +318,14 @@ export class Daemon {
       if ((err as Error).name === "AbortError" || signal?.aborted) return;
       throw err;
     }
-    if (buf.trim() && !signal?.aborted) throw badResponse(this.account, "a stream line is not JSON");
+    if (buf.trim() && !signal?.aborted) throw this.badResponse("a stream line is not JSON");
     if (!signal?.aborted && !opts.endOk) {
-      throw failure(`The daemon of account ${this.account} closed the stream.`, "stream_closed", [`Run \`whatsapp-axi doctor --account ${this.account}\``]);
+      throw failure(`The daemon of account ${this.account} closed the stream before its end.`, "STREAM_CLOSED", [this.doctor()]);
     }
   }
 }
 
-/** Fails as bad_response unless cond holds. */
+/** Fails as UNEXPECTED_RESPONSE unless cond holds. */
 export function expect(daemon: Daemon, cond: unknown, what: string): asserts cond {
-  if (!cond) throw badResponse(daemon.account, what);
+  if (!cond) throw daemon.badResponse(what);
 }

@@ -128,23 +128,25 @@ type APIError struct {
 	State      string   `json:"state,omitempty"`
 	Candidates []string `json:"candidates,omitempty"`
 	RetryAfter int      `json:"retry_after_seconds,omitempty"`
+	// ID is the message id of a send whose outcome is unknown, so the caller can retry with it.
+	ID string `json:"id,omitempty"`
 }
 
 func (e *APIError) Error() string { return e.Code + ": " + e.Message }
 
 func badRequest(format string, a ...any) *APIError {
-	return &APIError{Status: http.StatusBadRequest, Code: "bad_request", Message: fmt.Sprintf(format, a...)}
+	return &APIError{Status: http.StatusBadRequest, Code: "VALIDATION_ERROR", Message: fmt.Sprintf(format, a...)}
 }
 
 func notFound(format string, a ...any) *APIError {
-	return &APIError{Status: http.StatusNotFound, Code: "not_found", Message: fmt.Sprintf(format, a...)}
+	return &APIError{Status: http.StatusNotFound, Code: "NOT_FOUND", Message: fmt.Sprintf(format, a...)}
 }
 
-// BadRequest builds a bad_request error.
+// BadRequest builds a VALIDATION_ERROR error.
 func BadRequest(format string, a ...any) *APIError { return badRequest(format, a...) }
 
 // Internal is the body of every unexpected failure: no paths, no content.
-var Internal = &APIError{Status: http.StatusInternalServerError, Code: "internal", Message: "Internal error in the daemon; see its log."}
+var Internal = &APIError{Status: http.StatusInternalServerError, Code: "INTERNAL_ERROR", Message: "Internal error in the daemon; see its log."}
 
 func rfc3339(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 

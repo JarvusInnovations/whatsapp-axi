@@ -224,7 +224,7 @@ func TestDMFromAndOperators(t *testing.T) {
 	e.init()
 	d := e.start(startOpts{})
 	d.fake.Map(samLID, samPN)
-	d.patch(`{"operators":["+15550100001","100000000000002@lid"]}`)
+	d.patch(`{"operators":["+15550100001","100000000000002@lid"],"confirm":true}`)
 	dm := func(sender, alt string) *client.Message {
 		return msg("hi", func(m *client.Message) {
 			m.Chat, m.ChatType, m.Sender, m.SenderAlt = sender, client.ChatDirect, sender, alt
@@ -338,14 +338,14 @@ func TestAmbiguousRefChangesNothing(t *testing.T) {
 	id := nextID()
 	d.emit(msg("in one", mention, func(m *client.Message) { m.ID = id }))
 	d.emit(msg("in two", mention, func(m *client.Message) { m.ID = id; m.Chat = group2 }))
-	er := d.wantError("GET", "/v1/messages/"+id, nil, 409, "ambiguous")
+	er := d.wantError("GET", "/v1/messages/"+id, nil, 409, "AMBIGUOUS")
 	cands, _ := er["candidates"].([]any)
 	if len(cands) != 2 || cands[0] != group+"/"+id || cands[1] != group2+"/"+id {
 		t.Fatalf("candidates: %v", er)
 	}
 	var st1, st2 core.Status
 	d.get("/v1/status", &st1)
-	d.wantError("POST", "/v1/forget", map[string]string{"id": id}, 409, "ambiguous")
+	d.wantError("POST", "/v1/forget", map[string]string{"id": id}, 409, "AMBIGUOUS")
 	d.get("/v1/status", &st2)
 	if st1.Counts != st2.Counts {
 		t.Fatalf("an ambiguous forget changed something: %+v %+v", st1.Counts, st2.Counts)
@@ -445,7 +445,7 @@ func TestNoKeyMaterialAnywhere(t *testing.T) {
 	d.get("/v1/messages?chat="+group, nil)
 	d.get("/v1/messages/"+url.PathEscape(group)+"/"+m.ID, nil)
 	d.get("/v1/messages/"+m.ID, nil)
-	d.wantError("GET", "/v1/messages/"+url.PathEscape(group)+"/nope", nil, 404, "not_found")
+	d.wantError("GET", "/v1/messages/"+url.PathEscape(group)+"/nope", nil, 404, "NOT_FOUND")
 	b64 := base64.StdEncoding.EncodeToString(keys)
 	for _, body := range d.transcript {
 		if bytes.Contains(body, keys) || bytes.Contains(body, []byte(b64)) || bytes.Contains(body, []byte("media_keys")) {

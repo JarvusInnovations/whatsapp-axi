@@ -108,3 +108,14 @@ a guarantee.
 | [cli.md](cli.md) | every CLI command |
 | [security.md](security.md) | the rules that must hold, and how each is tested |
 | [distribution.md](distribution.md) | how the two programs are built, licensed and shipped |
+
+## Principles
+
+**Inherited** ([principles.md](principles.md)):
+
+- *The daemon decides what is kept*: the daemon is the only writer of an account's files.
+- *One Unix user, one trust boundary*: no TCP listener; accounts are per user.
+- *A transport, not an agent*: what is left to consumers.
+- *Follow the house style, and write down each departure*: the files table is the house layout.
+
+**Local:** none.

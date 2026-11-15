@@ -62,7 +62,8 @@ describe("daemon install", () => {
   it("copies the binary to the stable path, writes the template unit, enables and starts it", async () => {
     const r = await run(["daemon", "install", "example"]);
     expect(r.code, r.out).toBe(0);
-    expect(r.out).toContain("installed: example");
+    expect(r.out).toContain("action: installed");
+    expect(r.out).toContain("whatsapp-axi daemon uninstall example --confirm` to undo");
     expect(r.out).toContain("service: active (running)");
     expect(readFileSync(installed(), "utf-8")).toBe(readFileSync(src, "utf-8"));
     expect(statSync(installed()).mode & 0o777).toBe(0o755);
@@ -86,7 +87,7 @@ describe("daemon install", () => {
     service.linger = false;
     let r = await run(["daemon", "install", "example"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: linger_off");
+    expect(r.out).toContain("code: LINGER_OFF");
     expect(r.out).toContain("loginctl enable-linger tester");
     expect(r.out).toContain("--no-linger-check");
     expect(existsSync(installed()) || existsSync(unitPath())).toBe(false);
@@ -105,18 +106,18 @@ describe("daemon install", () => {
     try {
       const r = await run(["daemon", "install", "example"]);
       expect(r.code).toBe(1);
-      expect(r.out).toContain("code: daemon_running");
+      expect(r.out).toContain("code: DAEMON_RUNNING");
       expect(existsSync(unitPath())).toBe(false);
     } finally {
       await fake.close();
     }
     let r = await run(["daemon", "install", "nobody"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("no_account");
+    expect(r.out).toContain("NO_ACCOUNT");
     service.isSupported = false;
     r = await run(["daemon", "install", "example"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("unsupported_platform");
+    expect(r.out).toContain("UNSUPPORTED_PLATFORM");
     expect(r.out).toContain("daemon run");
   });
 
@@ -124,7 +125,7 @@ describe("daemon install", () => {
     service.failVerb = "enable";
     const r = await run(["daemon", "install", "example"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: service_failed");
+    expect(r.out).toContain("code: SERVICE_FAILED");
     expect(r.out).toContain("Failed to connect to bus");
   });
 });
@@ -134,7 +135,7 @@ describe("daemon start, stop, restart, status, uninstall", () => {
     for (const verb of ["start", "stop", "restart"]) {
       const r = await run(["daemon", verb, "example"]);
       expect(r.code).toBe(1);
-      expect(r.out).toContain("code: not_installed");
+      expect(r.out).toContain("code: NOT_INSTALLED");
       expect(r.out).toContain("whatsapp-axi daemon install example");
     }
   });
@@ -145,11 +146,13 @@ describe("daemon start, stop, restart, status, uninstall", () => {
     let r = await run(["daemon", "start", "example"]);
     expect(r.out).toContain("already running (no-op)");
     r = await run(["daemon", "stop", "example"]);
-    expect(r.out).toContain("example inactive (dead)");
+    expect(r.out).toContain("action: stopped");
+    expect(r.out).toContain("service: inactive (dead)");
     r = await run(["daemon", "stop", "example"]);
     expect(r.out).toContain("already stopped (no-op)");
     r = await run(["daemon", "start", "example"]);
-    expect(r.out).toContain("example active (running)");
+    expect(r.out).toContain("action: started");
+    expect(r.out).toContain("service: active (running)");
     r = await run(["daemon", "restart", "example"]);
     expect(r.code).toBe(0);
     expect(service.verbs()).toEqual(["stop whatsapp-axi@example.service", "start whatsapp-axi@example.service", "restart whatsapp-axi@example.service"]);
@@ -158,7 +161,8 @@ describe("daemon start, stop, restart, status, uninstall", () => {
   it("shows the service and the daemon together", async () => {
     let r = await run(["daemon", "status", "example"]);
     expect(r.out).toContain("installed: false");
-    expect(r.out).toContain("state: not running");
+    expect(r.out).toContain("unavailable (DAEMON_NOT_RUNNING");
+    expect(r.out).not.toContain("null");
     expect(r.out).toContain("daemon install example");
     await run(["daemon", "install", "example"]);
     r = await run(["daemon", "status", "example"]);
@@ -177,7 +181,7 @@ describe("daemon start, stop, restart, status, uninstall", () => {
         service.startAs = as;
         const r = await run(["daemon", "install", "example"]);
         expect(r.code, `${as}: ${r.out}`).toBe(1);
-        expect(r.out).toContain("code: service_not_ready");
+        expect(r.out).toContain("code: SERVICE_NOT_READY");
         expect(r.out).toContain("whatsapp-axi daemon logs example");
         if (as === "failed") expect(r.out).toContain("failed (failed)");
         if (as === "activating") expect(r.out).toContain("activating (auto-restart)");
@@ -190,7 +194,7 @@ describe("daemon start, stop, restart, status, uninstall", () => {
       for (const verb of ["start", "restart"]) {
         const r = await run(["daemon", verb, "example"]);
         expect(r.code, `${verb}: ${r.out}`).toBe(1);
-        expect(r.out).toContain("code: service_not_ready");
+        expect(r.out).toContain("code: SERVICE_NOT_READY");
       }
     } finally {
       Object.assign(READY, saved);
@@ -211,7 +215,7 @@ describe("daemon start, stop, restart, status, uninstall", () => {
     r = await run(["daemon", "uninstall", "other", "--confirm"]);
     expect(r.out).toContain("template_unit: removed");
     expect(existsSync(unitPath())).toBe(false);
-    expect(existsSync(join(env.home, "config", "whatsapp-axi", "example", "settings.json"))).toBe(true);
+    expect(existsSync(join(env.home, "config", "whatsapp-axi", "accounts", "example", "settings.json"))).toBe(true);
     r = await run(["daemon", "uninstall", "other", "--confirm"]);
     expect(r.out).toContain("not installed (no-op)");
   });
@@ -230,13 +234,13 @@ describe("daemon logs", () => {
     service.logResult = { code: 1, stdout: "", stderr: "No journal files were found.\n" };
     r = await run(["daemon", "logs", "example"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: logs_failed");
+    expect(r.out).toContain("code: LOGS_FAILED");
     // journalctl that exits 0 having read nothing is a failure, not an empty log.
     service.logLines = [];
     service.logResult = { code: 0, stdout: "", stderr: "No journal files were opened due to insufficient permissions.\n" };
     r = await run(["daemon", "logs", "example"]);
     expect(r.code, r.out).toBe(1);
-    expect(r.out).toContain("code: logs_failed");
+    expect(r.out).toContain("code: LOGS_FAILED");
     expect(r.out).toContain("insufficient permissions");
     r = await run(["daemon", "logs", "example", "--lines", "0"]);
     expect(r.code).toBe(2);
@@ -256,24 +260,29 @@ describe("daemon upgrade and doctor", () => {
     fake.route("GET /v1/status", () => ({ body: { ...STATUS, daemon_version: "0.0.1" } }));
     {
       let r = await run(["doctor", "--account", "example"]);
-      expect(r.out).toContain("example,binary,warn,");
+      expect(r.out).toContain("example,binary,fail,");
       expect(r.out).toContain("installed binary 0.0.1");
       expect(r.out).toContain("whatsapp-axi daemon upgrade");
 
       service.calls = [];
       r = await run(["daemon", "upgrade"]);
       expect(r.code, r.out).toBe(0);
-      expect(r.out).toContain("upgrade: replaced");
+      expect(r.out).toContain("action: upgraded");
       expect(r.out).toContain(`version: ${VERSION}`);
+      expect(r.out).toContain("accounts[2]{account,action,detail}:");
+      expect(r.out).toContain("example,restarted,");
+      expect(r.out).toContain("other,restarted,");
       expect(service.verbs()).toEqual(["restart whatsapp-axi@example.service", "restart whatsapp-axi@other.service"]);
       expect(readFileSync(installed(), "utf-8")).toBe(readFileSync(src, "utf-8"));
 
       // The restarted daemon now runs the new binary.
       fake.route("GET /v1/status", () => ({ body: { ...STATUS, daemon_version: VERSION } }));
       r = await run(["doctor", "--account", "example"]);
-      expect(r.out).toContain(`example,binary,ok,installed binary ${VERSION} matches the cli and the running daemon`);
+      expect(r.code, r.out).toBe(0);
+      expect(r.out).toContain(`example,binary,ok,installed binary ${VERSION} matches the cli`);
+      expect(r.out).toContain("example,versions,ok");
       expect(r.out).toContain("example,service,ok");
-      expect(r.out).toContain("example,linger,ok");
+      expect(r.out).toContain("example,lingering,ok");
 
       r = await run(["daemon", "upgrade"]);
       expect(r.out).toContain("already this CLI's (no-op)");
@@ -289,8 +298,9 @@ describe("daemon upgrade and doctor", () => {
 
   it("doctor names the service fixes", async () => {
     let r = await run(["doctor"]);
-    expect(r.out).toContain("example,service,warn,");
-    expect(r.out).toContain("whatsapp-axi daemon install example");
+    expect(r.out).toContain("example,service,fail,");
+    expect(r.out).toContain("Run `whatsapp-axi daemon install example` to fix service of example");
+    expect(r.out).toContain("example,lingering,skipped,needs an installed service");
     await run(["daemon", "install", "example"]);
     await run(["daemon", "stop", "example"]);
     service.linger = false;
@@ -298,10 +308,35 @@ describe("daemon upgrade and doctor", () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain("example,service,fail,");
     expect(r.out).toContain("whatsapp-axi daemon start example");
-    expect(r.out).toContain("example,linger,fail,");
+    expect(r.out).toContain("example,lingering,fail,");
     expect(r.out).toContain("loginctl enable-linger tester");
     service.isSupported = false;
     r = await run(["doctor"]);
-    expect(r.out).not.toContain("example,service");
+    expect(r.out).toContain("example,service,skipped,");
+  });
+});
+
+describe("daemon upgrade with several accounts", () => {
+  it("lists each account's result, and goes on past one that fails", async () => {
+    const old = fakeBinary("0.0.1", "old");
+    process.env.WHATSAPP_AXI_DAEMON = old;
+    addAccount(env, "other");
+    await run(["daemon", "install", "example"]);
+    await run(["daemon", "install", "other"]);
+    process.env.WHATSAPP_AXI_DAEMON = src;
+    const { READY } = await import("../src/commands/daemon.js");
+    const saved = READY.waitMs;
+    READY.waitMs = 300;
+    service.startAs = "failed";
+    try {
+      const r = await run(["daemon", "upgrade"]);
+      expect(r.code, r.out).toBe(1);
+      expect(r.out).toContain("example,unchanged,\"failed (SERVICE_NOT_READY");
+      expect(r.out).toContain("other,unchanged,\"failed (SERVICE_NOT_READY");
+      expect(r.out).toContain("code: SERVICE_NOT_READY");
+    } finally {
+      READY.waitMs = saved;
+      service.startAs = undefined;
+    }
   });
 });

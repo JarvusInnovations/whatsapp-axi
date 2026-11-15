@@ -51,3 +51,13 @@ run with secure deletion on for `store.db`, so removed content is overwritten.
 This repository is public. Nothing in it, including tests, fixtures, docs, commit messages and
 pull requests, contains a real phone number, a real WhatsApp id, a real person's or
 organization's name, or a real host name. Examples use invented ids in reserved ranges.
+
+## Principles
+
+**Inherited** ([principles.md](principles.md)):
+
+- *One Unix user, one trust boundary*.
+- *The daemon decides what is kept*.
+- *Say exactly what is promised*.
+
+**Local:** none.

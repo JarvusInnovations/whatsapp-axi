@@ -41,9 +41,9 @@ const read = (p: string) => JSON.parse(readFileSync(p, "utf-8"));
 
 describe("--json-out=path writes the daemon's body; stdout stays TOON", () => {
   const cases: [string, string[], string, Record<string, unknown>, string][] = [
-    ["a list (chats)", ["chats"], "GET /v1/chats", { chats: [{ id: GROUP, name: "Example group", type: "group", scope: "tagged", last_kept: null, discarded: 4, messages: 2 }] }, ".chats[]"],
+    ["a list (chats)", ["chats"], "GET /v1/chats", { chats: [{ id: GROUP, name: "Example group", type: "group", scope: "tagged", last_kept: null, discarded: 4, messages: 2 }], total: 1 }, ".chats[]"],
     ["a detail (chat view)", ["chat", "view", GROUP], "GET /v1/chats/*", { chat: { id: GROUP, name: "Example group", type: "group", scope: "tagged", participants: [SAM] } }, "jq ."],
-    ["events", ["events", "--after", "411"], "GET /v1/events", { events: EVENTS, latest_seq: 413, after: 411 }, ".events[]"],
+    ["events", ["events", "--after", "411"], "GET /v1/events", { events: EVENTS, latest_seq: 413, after: 411, total: 2 }, ".events[]"],
     ["a mutation (send)", ["send", GROUP, "On it"], "POST /v1/send", SENT, "jq ."],
   ];
   for (const [what, argv, route, body, hint] of cases) {
@@ -61,7 +61,7 @@ describe("--json-out=path writes the daemon's body; stdout stays TOON", () => {
     });
   }
 
-  it("an existing file is truncated", async () => {
+  it("an existing file is replaced, and the output says overwrote", async () => {
     const p = join(dir, "out.json");
     writeFileSync(p, "x".repeat(10000), { mode: 0o644 });
     fake.route("POST /v1/send", () => ({ body: SENT }));
@@ -69,6 +69,14 @@ describe("--json-out=path writes the daemon's body; stdout stays TOON", () => {
     expect(r.code, r.out).toBe(0);
     expect(read(p)).toEqual(SENT);
     expect(statSync(p).mode & 0o777).toBe(0o600);
+    expect(r.out).toContain(`overwrote: ${p}`);
+  });
+
+  it("names the columns of the file's records", async () => {
+    fake.route("GET /v1/chats", () => ({ body: { chats: [{ id: GROUP, name: "x", type: "group", scope: "tagged" }] } }));
+    const p = join(dir, "c.json");
+    const r = await run(["chats", `--json-out=${p}`]);
+    expect(r.out).toContain("columns[4]: id,name,type,scope");
   });
 });
 
@@ -108,6 +116,7 @@ describe("doctor and daemon status write the rows they print", () => {
       const r = await run(argv);
       expect(r.code, argv.join(" ")).toBe(2);
       expect(r.out).toContain("unknown flag --json-out");
+      expect(r.out).toContain("--json-out works on");
     }
   });
 });
@@ -115,12 +124,12 @@ describe("doctor and daemon status write the rows they print", () => {
 describe("errors", () => {
   it("a daemon error: the file holds it as sent, stdout the usual error, exit code kept", async () => {
     const extra = { retry_after_seconds: 30 };
-    fake.route("POST /v1/send", () => apiError(429, "rate_limited", "Too many messages.", extra));
+    fake.route("POST /v1/send", () => apiError(429, "RATE_LIMITED", "Too many messages.", extra));
     const p = join(dir, "err.json");
     const r = await run(["send", GROUP, "hi", `--json-out=${p}`]);
     expect(r.code).toBe(1);
-    expect(read(p)).toEqual({ error: { code: "rate_limited", message: "Too many messages.", ...extra } });
-    expect(r.out).toContain("code: rate_limited");
+    expect(read(p)).toEqual({ error: { code: "RATE_LIMITED", message: "Too many messages.", ...extra } });
+    expect(r.out).toContain("code: RATE_LIMITED");
     expect(r.out).toContain(`wrote: ${p} (the error)`);
     expect(r.out).toContain(`jq .error ${p}`);
   });
@@ -130,8 +139,8 @@ describe("errors", () => {
     const p = join(dir, "err.json");
     const r = await run(["chats", `--json-out=${p}`]);
     expect(r.code).toBe(1);
-    expect(read(p).error).toMatchObject({ code: "daemon_not_running" });
-    expect(r.out).toContain("code: daemon_not_running");
+    expect(read(p).error).toMatchObject({ code: "DAEMON_NOT_RUNNING" });
+    expect(r.out).toContain("code: DAEMON_NOT_RUNNING");
   });
 
   it("a symlink at the path is refused and nothing is sent", async () => {
@@ -143,7 +152,7 @@ describe("errors", () => {
     fake.route("POST /v1/send", () => ((sent = true), { body: SENT }));
     const r = await run(["send", GROUP, "hi", `--json-out=${p}`]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("json_out_unwritable");
+    expect(r.out).toContain("EXPORT_UNWRITABLE");
     expect(sent).toBe(false);
     expect(readFileSync(target, "utf-8")).toBe("keep");
     expect(lstatSync(p).isSymbolicLink()).toBe(true);
@@ -154,7 +163,7 @@ describe("errors", () => {
     fake.route("POST /v1/send", () => ((sent = true), { body: SENT }));
     const r = await run(["send", GROUP, "hi", `--json-out=${join(dir, "missing", "out.json")}`]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("json_out_unwritable");
+    expect(r.out).toContain("EXPORT_UNWRITABLE");
     expect(sent).toBe(false);
   });
 });
@@ -168,17 +177,42 @@ describe("the flag itself", () => {
     const m = r.out.match(/wrote: (\S+) /);
     expect(m, r.out).not.toBeNull();
     const p = m![1];
-    expect(p.startsWith(join(dir, "whatsapp-axi") + "/")).toBe(true);
+    expect(p.startsWith(join(dir, `whatsapp-axi-${process.getuid?.()}`) + "/")).toBe(true);
+    expect(statSync(join(dir, `whatsapp-axi-${process.getuid?.()}`)).mode & 0o777).toBe(0o700);
     expect(p).toMatch(/events.*\.json$/);
     expect(statSync(p).mode & 0o777).toBe(0o600);
     expect(read(p).latest_seq).toBe(413);
   });
 
-  it("a bare --json-out followed by a .json argument is a usage error naming the fix", async () => {
+  it("--json-out in the space form is always a usage error naming the = form", async () => {
     mkdirSync(join(dir, "x"));
-    const r = await run(["chats", "--json-out", "out.json"]);
-    expect(r.code).toBe(2);
-    expect(r.out).toContain("--json-out=out.json");
+    for (const arg of ["out.json", "out.txt", "x"]) {
+      const r = await run(["chats", "--json-out", arg]);
+      expect(r.code, arg).toBe(2);
+      expect(r.out).toContain(`--json-out=${arg}`);
+    }
+  });
+
+  it("an automatic directory open to others is refused before anything is done", async () => {
+    process.env.TMPDIR = dir;
+    const auto = join(dir, `whatsapp-axi-${process.getuid?.()}`);
+    mkdirSync(auto, { mode: 0o777 });
+    const { chmodSync } = await import("node:fs");
+    chmodSync(auto, 0o777);
+    let sent = false;
+    fake.route("POST /v1/send", () => ((sent = true), { body: SENT }));
+    const r = await run(["send", GROUP, "hi", "--json-out"]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("EXPORT_UNWRITABLE");
+    expect(sent).toBe(false);
+  });
+
+  it("a failed write after a successful send keeps the result, says export_error and exits 1", async () => {
+    fake.route("POST /v1/send", () => ({ body: SENT }));
+    const r = await run(["send", GROUP, "hi", "--json-out=/dev/full"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("action: sent");
+    expect(r.out).toContain("export_error:");
   });
 
   it("--json is an unknown flag", async () => {

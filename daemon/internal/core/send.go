@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -31,6 +32,7 @@ const MaxTextBytes = 64 * 1024
 
 // SendBody is POST /v1/send.
 type SendBody struct {
+	ID           string   `json:"id"`
 	Chat         string   `json:"chat"`
 	Text         string   `json:"text"`
 	ReplyTo      string   `json:"reply_to"`
@@ -40,6 +42,7 @@ type SendBody struct {
 
 // SendFileBody is POST /v1/send-file.
 type SendFileBody struct {
+	ID           string `json:"id"`
 	Chat         string `json:"chat"`
 	Path         string `json:"path"`
 	Caption      string `json:"caption"`
@@ -74,6 +77,69 @@ type SentMessage struct {
 	T       string     `json:"t"`
 	Media   *MediaView `json:"media,omitempty"`
 	Warning string     `json:"warning,omitempty"`
+	// AlreadySent is set when a send named an id already sent to that chat: nothing was sent
+	// again, and the answer is the recorded one.
+	AlreadySent bool `json:"already_sent,omitempty"`
+}
+
+// sendIDRe is the form of a caller-chosen message id: what WhatsApp clients generate.
+var sendIDRe = regexp.MustCompile(`^[0-9A-F]{16,48}$`)
+
+func checkSendID(id string) error {
+	if id != "" && !sendIDRe.MatchString(id) {
+		return badRequest("id must be 16 to 48 characters of 0-9 and A-F (uppercase hex), as WhatsApp message ids are.")
+	}
+	return nil
+}
+
+// replay answers a send whose id is already recorded for the chat: the recorded result for one
+// that was sent, OUTCOME_UNKNOWN for one still pending. A failed one is removed so the send can be
+// made again under the same id. found is false when the id is new. The caller holds sendMu.
+func (a *Account) replay(ctx context.Context, chatRef, id string) (res *SentMessage, found bool, err error) {
+	if id == "" {
+		return nil, false, nil
+	}
+	t, err := a.sendTarget(ctx, chatRef)
+	if err != nil {
+		return nil, false, err
+	}
+	var status, mediaJSON string
+	var ts int64
+	err = a.db.QueryRowContext(ctx, `SELECT status, ts, coalesce(media, '') FROM messages WHERE chat_id=? AND id=? AND from_me=1`, t.chat, id).Scan(&status, &ts, &mediaJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		var n int
+		if err := a.db.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE id=?`, id).Scan(&n); err != nil {
+			return nil, false, err
+		}
+		if n > 0 {
+			return nil, false, badRequest("id %s is already used by another message; choose a new id.", id)
+		}
+		return nil, false, nil
+	} else if err != nil {
+		return nil, false, err
+	}
+	switch status {
+	case StatusSent:
+		out := &SentMessage{ID: id, Chat: t.chat, T: rfc3339(fromMS(ts)), AlreadySent: true}
+		if mediaJSON != "" {
+			var mv MediaView
+			if err := jsonUnmarshal(mediaJSON, &mv); err == nil {
+				out.Media = &mv
+			}
+		}
+		return out, true, nil
+	case StatusPending:
+		e := OutcomeUnknown("A send with this id")
+		e.ID = id
+		return nil, false, e
+	default:
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if _, err := a.db.ExecContext(ctx, `DELETE FROM messages WHERE chat_id=? AND id=? AND status=?`, t.chat, id, StatusFailed); err != nil {
+			return nil, false, err
+		}
+		return nil, false, nil
+	}
 }
 
 // ReactResult is the answer to a reaction. Warning as for SentMessage.
@@ -101,7 +167,7 @@ type DownloadResult struct {
 
 func notDownloadable(format string, a ...any) *APIError {
 	e := badRequest(format, a...)
-	e.Status, e.Code = 422, "not_downloadable"
+	e.Status, e.Code = 422, "NOT_DOWNLOADABLE"
 	return e
 }
 
@@ -143,7 +209,7 @@ func (a *Account) sendTarget(ctx context.Context, ref string) (target, error) {
 		return target{chat: id, isGroup: identity.IsGroup(id), known: n > 0}, nil
 	}
 	var ae *APIError
-	if !errors.As(err, &ae) || ae.Code != "not_found" {
+	if !errors.As(err, &ae) || ae.Code != "NOT_FOUND" {
 		return target{}, err
 	}
 	key, err := a.canonicalChatKey(ctx, ref)
@@ -236,6 +302,7 @@ func (a *Account) resolveMentions(ctx context.Context, t target, ids []string, t
 
 // outgoing is one send in preparation.
 type outgoing struct {
+	id       string // the caller's message id, or "" for a new one
 	t        target
 	msg      client.OutMessage
 	row      row
@@ -250,12 +317,19 @@ func (a *Account) Send(ctx context.Context, b SendBody) (*SentMessage, error) {
 	if len(b.Text) > MaxTextBytes || !utf8.ValidString(b.Text) {
 		return nil, badRequest("text must be valid UTF-8 of at most %d bytes.", MaxTextBytes)
 	}
+	if err := checkSendID(b.ID); err != nil {
+		return nil, err
+	}
 	a.sendMu.Lock()
 	defer a.sendMu.Unlock()
+	if prev, found, err := a.replay(ctx, b.Chat, b.ID); err != nil || found {
+		return prev, err
+	}
 	o, err := a.prepare(ctx, b.Chat, b.ReplyTo, b.FirstContact)
 	if err != nil {
 		return nil, err
 	}
+	o.id = b.ID
 	mentions, text, err := a.resolveMentions(ctx, o.t, b.Mentions, b.Text)
 	if err != nil {
 		return nil, err
@@ -270,6 +344,15 @@ func (a *Account) Send(ctx context.Context, b SendBody) (*SentMessage, error) {
 func (a *Account) SendFile(ctx context.Context, b SendFileBody) (*SentMessage, error) {
 	if b.Path == "" || !filepath.IsAbs(b.Path) {
 		return nil, badRequest("path must be an absolute path to a file.")
+	}
+	if err := checkSendID(b.ID); err != nil {
+		return nil, err
+	}
+	// Sends run one at a time; a replay is answered before the file is read.
+	a.sendMu.Lock()
+	defer a.sendMu.Unlock()
+	if prev, found, err := a.replay(ctx, b.Chat, b.ID); err != nil || found {
+		return prev, err
 	}
 	switch b.As {
 	case "", "image", "video", "audio", "document":
@@ -316,12 +399,11 @@ func (a *Account) SendFile(ctx context.Context, b SendFileBody) (*SentMessage, e
 		}
 	}
 
-	a.sendMu.Lock()
-	defer a.sendMu.Unlock()
 	o, err := a.prepare(ctx, b.Chat, b.ReplyTo, b.FirstContact)
 	if err != nil {
 		return nil, err
 	}
+	o.id = b.ID
 	o.msg.Text, o.msg.File, o.limitTxt = b.Caption, file, b.Caption
 	o.row.text = b.Caption
 	mv := &MediaView{Type: typ, MIME: mimeType, Size: int64(len(data))}
@@ -343,7 +425,7 @@ func (a *Account) prepare(ctx context.Context, chatRef, replyTo string, firstCon
 		return nil, err
 	}
 	if !t.known && !firstContact && a.Settings().Send.FirstContact != "allow" {
-		return nil, conflict("first_contact", "", "Nothing has been received from or sent to %s. Sending to a new chat needs first_contact (send.first_contact is refuse).", t.chat)
+		return nil, conflict("FIRST_CONTACT", "", "Nothing has been received from or sent to %s. Sending to a new chat needs first_contact (send.first_contact is refuse).", t.chat)
 	}
 	own := a.own()
 	o := &outgoing{t: t, msg: client.OutMessage{Chat: t.chat}}
@@ -375,7 +457,10 @@ func (a *Account) dispatch(ctx context.Context, o *outgoing) (*SentMessage, erro
 	if e := a.limits.check(now, a.Settings().Send, o.t.chat, o.limitTxt); e != nil {
 		return nil, e
 	}
-	id := a.client.NewMessageID()
+	id := o.id
+	if id == "" {
+		id = a.client.NewMessageID()
+	}
 	if id == "" {
 		return nil, a.notConnected("Sending")
 	}
@@ -409,7 +494,9 @@ func (a *Account) dispatch(ctx context.Context, o *outgoing) (*SentMessage, erro
 		if errors.Is(sendErr, client.ErrOutcomeUnknown) || ctx.Err() != nil {
 			// It may have gone out: the row stays pending until the outcome is learned.
 			a.log.Warn("a send's outcome is unknown", "err", sendErr)
-			return nil, OutcomeUnknown("Sending")
+			e := OutcomeUnknown("Sending")
+			e.ID = id
+			return nil, e
 		}
 		if _, err := a.db.ExecContext(ctx, `UPDATE messages SET status=? WHERE chat_id=? AND id=?`, StatusFailed, o.t.chat, id); err != nil {
 			a.log.Error("marking a send failed", "err", err)

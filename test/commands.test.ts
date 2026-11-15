@@ -57,33 +57,34 @@ describe("chats", () => {
   });
 
   it("fails, never prints an empty list, on errors and unreadable answers", async () => {
-    fake.route("GET /v1/chats", () => apiError(500, "internal", "Internal error in the daemon; see its log."));
+    fake.route("GET /v1/chats", () => apiError(500, "INTERNAL_ERROR", "Internal error in the daemon; see its log."));
     let r = await run(["chats"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: internal");
+    expect(r.out).toContain("code: INTERNAL_ERROR");
     expect(r.out).not.toContain("0 chats");
     fake.route("GET /v1/chats", () => ({ raw: "not json" }));
     r = await run(["chats"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: bad_response");
+    expect(r.out).toContain("code: UNEXPECTED_RESPONSE");
     fake.route("GET /v1/chats", () => ({ body: { chats: "oops" } }));
     r = await run(["chats"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: bad_response");
+    expect(r.out).toContain("code: UNEXPECTED_RESPONSE");
     fake.route("GET /v1/chats", () => ({ status: 500, raw: "{}" }));
     r = await run(["chats"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: bad_response");
+    expect(r.out).toContain("code: UNEXPECTED_RESPONSE");
   });
 
   it("stops on a protocol it does not support, naming both versions and the upgrade", async () => {
     fake.route("GET /v1/status", () => ({ body: { ...STATUS, protocol: 2, daemon_version: "9.0.0" } }));
     const r = await run(["chats"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: protocol_mismatch");
+    expect(r.out).toContain("code: PROTOCOL_MISMATCH");
     expect(r.out).toContain("protocol 2");
     expect(r.out).toContain("9.0.0");
-    expect(r.out).toContain("npm install -g whatsapp-axi@latest");
+    expect(r.out).not.toContain("npm install");
+    expect(r.out).toContain("whatsapp-axi daemon upgrade");
   });
 
   it("sends its version in User-Agent", async () => {
@@ -113,26 +114,27 @@ describe("chat view", () => {
     const r = await run(["chat", "view", GROUP]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("participants[3]{id,name,marks}:");
-    expect(r.out).toContain("100000000000000@lid,\"\",me");
+    expect(r.out).toContain("100000000000000@lid,\"-\",me");
+    expect(r.out).not.toContain("null");
     expect(r.out).toContain("100000000000001@lid,Sam,operator contact");
     expect(r.out).toContain("100000000000002@lid,Alex,\"-\"");
   });
 
   it("passes daemon errors through with a help line", async () => {
-    fake.route("GET /v1/chats/*", () => apiError(404, "not_found", "No kept chat 120363000000000009@g.us."));
+    fake.route("GET /v1/chats/*", () => apiError(404, "NOT_FOUND", "No kept chat 120363000000000009@g.us."));
     let r = await run(["chat", "view", "120363000000000009@g.us"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: not_found");
+    expect(r.out).toContain("code: NOT_FOUND");
     expect(r.out).toContain("whatsapp-axi chats");
-    fake.route("GET /v1/chats/*", () => apiError(409, "not_connected", "The participant list needs a live connection.", { state: "connecting" }));
+    fake.route("GET /v1/chats/*", () => apiError(409, "NOT_CONNECTED", "The participant list needs a live connection.", { state: "connecting" }));
     r = await run(["chat", "view", GROUP]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: not_connected");
+    expect(r.out).toContain("code: NOT_CONNECTED");
     expect(r.out).toContain("whatsapp-axi doctor");
-    fake.route("GET /v1/chats/*", () => apiError(400, "bad_request", "\"x\" is not a chat"));
+    fake.route("GET /v1/chats/*", () => apiError(400, "VALIDATION_ERROR", "\"x\" is not a chat"));
     r = await run(["chat", "view", "x"]);
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("code: bad_request");
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("code: VALIDATION_ERROR");
   });
 });
 
@@ -162,7 +164,7 @@ describe("events", () => {
     const r = await run(["events", "--after", "410", "--limit", "3"]);
     expect(r.code, r.out).toBe(0);
     expect(r.out).toContain("count: 3 of 10");
-    expect(r.out).toContain("The limit cut the list: 7 more after seq 413");
+    expect(r.out).toContain("whatsapp-axi events --after 413` for the 7 more after seq 413");
     fake.route("GET /v1/events", () => ({ body: { events, latest_seq: 413, after: 410, total: 3 } }));
     const r2 = await run(["events", "--after", "410"]);
     expect(r2.out).toContain("count: 3 of 3");
@@ -202,10 +204,10 @@ describe("events", () => {
     expect(r.code).toBe(2);
     r = await run(["events", "--limit", "0"]);
     expect(r.code).toBe(2);
-    fake.route("GET /v1/events", () => apiError(404, "not_found", "No kept chat x."));
+    fake.route("GET /v1/events", () => apiError(404, "NOT_FOUND", "No kept chat x."));
     r = await run(["events", "--chat", "120363000000000009@g.us"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: not_found");
+    expect(r.out).toContain("code: NOT_FOUND");
   });
 
   it("passes --mark-read and shows how many were marked", async () => {
@@ -244,23 +246,22 @@ describe("events", () => {
   });
 
   it("follow says a failed mark on its own line, keeps streaming, and exits 1", async () => {
-    fake.route("GET /v1/events", () => ({ lines: [events[0], { error: { code: "mark_failed", message: "1 not marked", marked: 0, already_marked: 0, failed: 1, reason: "whatsapp_error" } }, events[1]] }));
+    fake.route("GET /v1/events", () => ({ lines: [events[0], { error: { code: "MARK_FAILED", message: "1 not marked", marked: 0, already_marked: 0, failed: 1, reason: "whatsapp_error" } }, events[1]] }));
     const ac = new AbortController();
     const { events: eventsCmd } = await import("../src/commands/read.js");
-    const { defaultCtx } = await import("../src/context.js");
+    const { testCtx } = await import("./helpers.js");
     const lines: string[] = [];
     process.exitCode = undefined;
-    const done = eventsCmd(defaultCtx(), ["--after", "410", "--follow", "--mark-read"], (s) => {
+    const done = eventsCmd(testCtx(), ["--after", "410", "--follow", "--mark-read"], (s) => {
       lines.push(s);
       if (lines.length === 3) ac.abort();
     }, ac.signal);
     const result = (await done) as { last_seq: number; help?: string[] };
-    expect(lines[1]).toContain("mark_read_failed");
-    expect(lines[1]).toContain("whatsapp_error");
+    expect(lines[1]).toContain("code: MARK_FAILED");
+    expect(lines[1]).toContain("reason: whatsapp_error");
     expect(lines[2]).toContain("412,message");
-    expect(result.help?.[0]).toContain("try again");
-    expect(process.exitCode).toBe(1);
-    process.exitCode = undefined;
+    expect(result.help?.[0]).toContain("try the read receipts again");
+    expect((result as unknown as { code: string }).code).toBe("MARK_FAILED");
   });
 
   it("without --mark-read asks for no marking", async () => {
@@ -278,9 +279,9 @@ describe("events", () => {
     });
     const ac = new AbortController();
     const { events: eventsCmd } = await import("../src/commands/read.js");
-    const { defaultCtx } = await import("../src/context.js");
+    const { testCtx } = await import("./helpers.js");
     const lines: string[] = [];
-    const done = eventsCmd(defaultCtx(), ["--after", "410", "--follow"], (s) => {
+    const done = eventsCmd(testCtx(), ["--after", "410", "--follow"], (s) => {
       lines.push(s);
       if (lines.length === 3) ac.abort();
     }, ac.signal);
@@ -342,10 +343,10 @@ describe("groups", () => {
     let r = await run(["groups"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("0 groups");
-    fake.route("GET /v1/groups", () => apiError(409, "not_connected", "Listing groups needs a live connection to WhatsApp; the account is connecting.", { state: "connecting" }));
+    fake.route("GET /v1/groups", () => apiError(409, "NOT_CONNECTED", "Listing groups needs a live connection to WhatsApp; the account is connecting.", { state: "connecting" }));
     r = await run(["groups"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: not_connected");
+    expect(r.out).toContain("code: NOT_CONNECTED");
   });
 });
 
@@ -369,10 +370,10 @@ describe("read and message view", () => {
   });
 
   it("passes not_found through", async () => {
-    fake.route("GET /v1/messages", () => apiError(404, "not_found", "No kept chat x."));
+    fake.route("GET /v1/messages", () => apiError(404, "NOT_FOUND", "No kept chat x."));
     const r = await run(["read", "120363000000000009@g.us"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: not_found");
+    expect(r.out).toContain("code: NOT_FOUND");
   });
 
   it("views one message with reply context and descriptor, truncating long text", async () => {
@@ -395,11 +396,11 @@ describe("read and message view", () => {
   it("takes a bare id and passes ambiguous through with the candidates", async () => {
     fake.route("GET /v1/messages/*", ({ path }) => {
       expect(path).toBe(`/v1/messages/${MESSAGE.id}`);
-      return apiError(409, "ambiguous", "Message id is kept in 2 chats.", { candidates: [`${GROUP}/${MESSAGE.id}`, `120363000000000002@g.us/${MESSAGE.id}`] });
+      return apiError(409, "AMBIGUOUS", "Message id is kept in 2 chats.", { candidates: [`${GROUP}/${MESSAGE.id}`, `120363000000000002@g.us/${MESSAGE.id}`] });
     });
     const r = await run(["message", "view", MESSAGE.id]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: ambiguous");
+    expect(r.out).toContain("code: AMBIGUOUS");
     expect(r.out).toContain(`120363000000000002@g.us/${MESSAGE.id}`);
   });
 
@@ -438,13 +439,13 @@ describe("forget", () => {
   });
 
   it("passes not_found and ambiguous through", async () => {
-    fake.route("POST /v1/forget", () => apiError(404, "not_found", "No kept message."));
+    fake.route("POST /v1/forget", () => apiError(404, "NOT_FOUND", "No kept message."));
     let r = await run(["forget", GROUP, "--message", "NOPE", "--confirm"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: not_found");
-    fake.route("POST /v1/forget", () => apiError(409, "ambiguous", "Ambiguous.", { candidates: ["a/b"] }));
+    expect(r.out).toContain("code: NOT_FOUND");
+    fake.route("POST /v1/forget", () => apiError(409, "AMBIGUOUS", "Ambiguous.", { candidates: ["a/b"] }));
     r = await run(["forget", GROUP, "--message", "b", "--confirm"]);
-    expect(r.out).toContain("code: ambiguous");
+    expect(r.out).toContain("code: AMBIGUOUS");
   });
 
   it("refuses a message ref from another chat", async () => {
@@ -456,7 +457,7 @@ describe("forget", () => {
     fake.route("POST /v1/forget", () => ({ body: { ok: true } }));
     const r = await run(["forget", GROUP, "--confirm"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("bad_response");
+    expect(r.out).toContain("UNEXPECTED_RESPONSE");
   });
 });
 
@@ -471,23 +472,32 @@ describe("scope, operators and settings", () => {
   it("sets the scope; full needs --confirm; a repeat is a no-op", async () => {
     let r = await run(["scope", "set", "full"]);
     expect(r.code).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
     r = await run(["scope", "set", "full", "--confirm"]);
-    expect(r.out).toContain("scope: full (set)");
+    expect(r.out).toContain("action: set");
+    expect(r.out).toContain("scope: full");
+    expect(r.out).toContain("note: was tagged");
+    expect(r.out).toContain("whatsapp-axi scope set tagged` to undo");
     expect(fake.seen.at(-1)?.body).toEqual({ scope: "full", confirm: true });
     r = await run(["scope", "set", "full", "--confirm"]);
     expect(r.code).toBe(0);
-    expect(r.out).toContain("already set, no-op");
+    expect(r.out).toContain("action: unchanged");
+    expect(r.out).toContain("(no-op)");
     r = await run(["scope", "set", "everything"]);
     expect(r.code).toBe(2);
   });
 
   it("sets and clears a chat override", async () => {
     let r = await run(["scope", "set", "--chat", GROUP, "none"]);
-    expect(r.out).toContain("none (set)");
+    expect(r.out).toContain("action: set");
+    expect(r.out).toContain("scope: none");
+    expect(r.out).toContain("note: was default");
+    expect(r.out).toContain(`whatsapp-axi scope set default --chat ${GROUP}`);
     expect(fake.seen.at(-1)?.body).toEqual({ chats: { [GROUP]: "none" } });
     r = await run(["scope", "set", "--chat", GROUP, "default"]);
     expect(fake.seen.at(-1)?.body).toEqual({ chats: { [GROUP]: null } });
-    expect(r.out).toContain("default (no override) (set)");
+    expect(r.out).toContain("scope: default");
+    expect(r.out).toContain("note: was none");
     r = await run(["scope", "set", "--chat", GROUP, "dm-only"]);
     expect(r.code).toBe(2);
   });
@@ -497,7 +507,9 @@ describe("scope, operators and settings", () => {
     expect(r.code).toBe(2);
     expect(r.out).toContain("scope dm-from anyone --confirm");
     r = await run(["scope", "dm-from", "anyone", "--confirm"]);
-    expect(r.out).toContain("dm_from: anyone (set)");
+    expect(r.out).toContain("action: set");
+    expect(r.out).toContain("dm_from: anyone");
+    expect(r.out).toContain("whatsapp-axi scope dm-from operators` to undo");
     expect(fake.seen.at(-1)?.body).toEqual({ dm_from: "anyone", confirm: true });
     r = await run(["scope", "dm-from", "operators"]);
     expect(r.code).toBe(0);
@@ -512,28 +524,34 @@ describe("scope, operators and settings", () => {
     r = await run(["settings", "set", "send.first_contact", "allow", "--confirm"]);
     expect(r.code, r.out).toBe(0);
     expect(fake.seen.at(-1)?.body).toEqual({ send: { first_contact: "allow" }, confirm: true });
-    fake.route("PATCH /v1/settings", () => apiError(409, "confirm_required", "This change widens what the account reads or loosens a send safeguard (raising send.per_hour from 60 to 120); send it with confirm: true."));
+    fake.route("PATCH /v1/settings", () => apiError(409, "CONFIRM_REQUIRED", "This change widens what the account reads or loosens a send safeguard (raising send.per_hour from 60 to 120); send it with confirm: true."));
     r = await run(["settings", "set", "send.per_hour", "120"]);
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("code: confirm_required");
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
     expect(r.out).toContain("whatsapp-axi settings set send.per_hour 120 --confirm");
-    expect(r.out).not.toContain("(set)");
+    expect(r.out).not.toContain("action: set");
   });
 
-  it("adds and removes operators idempotently", async () => {
+  it("adds and removes operators idempotently; adding needs --confirm", async () => {
     let r = await run(["operators", "list"]);
     expect(r.out).toContain("operators: 0 operators");
     r = await run(["operators", "add", "+15550100001"]);
-    expect(r.out).toContain("+15550100001 added");
-    r = await run(["operators", "add", "+15550100001"]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
+    expect(r.out).toContain("whatsapp-axi operators add +15550100001 --confirm");
+    r = await run(["operators", "add", "+15550100001", "--confirm"]);
+    expect(r.out).toContain("action: added");
+    expect(fake.seen.at(-1)?.body).toEqual({ operators: ["+15550100001"], confirm: true });
+    r = await run(["operators", "add", "+15550100001", "--confirm"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("already an operator (no-op)");
     r = await run(["operators", "list"]);
+    expect(r.out).toContain("count: 1 of 1");
     expect(r.out).toContain("+15550100001");
     r = await run(["operators", "remove", "+15550100001"]);
-    expect(r.out).toContain("removed");
+    expect(r.out).toContain("action: removed");
     r = await run(["operators", "remove", "+15550100001"]);
-    expect(r.out).toContain("is not an operator (no-op)");
+    expect(r.out).toContain("not an operator (no-op)");
     r = await run(["operators", "add", "15550100001"]);
     expect(r.code).toBe(2);
   });
@@ -542,7 +560,10 @@ describe("scope, operators and settings", () => {
     let r = await run(["settings", "show"]);
     expect(r.out).toContain("retain_days: 90 (default)");
     r = await run(["settings", "set", "retain_days", "30"]);
-    expect(r.out).toContain("retain_days: 30 (set)");
+    expect(r.out).toContain("action: set");
+    expect(r.out).toContain("retain_days: 30");
+    expect(r.out).toContain("note: was default");
+    expect(r.out).toContain("whatsapp-axi settings set retain_days default --confirm` to undo");
     expect(fake.seen.at(-1)?.body).toEqual({ retain_days: 30 });
     r = await run(["settings", "set", "send.per_hour", "20"]);
     expect(fake.seen.at(-1)?.body).toEqual({ send: { per_hour: 20 } });
@@ -555,15 +576,15 @@ describe("scope, operators and settings", () => {
   });
 
   it("passes a rejected change through and does not report success", async () => {
-    fake.route("PATCH /v1/settings", () => apiError(400, "bad_request", "settings: send.per_hour: must be a whole number from 1 to 100000"));
+    fake.route("PATCH /v1/settings", () => apiError(400, "VALIDATION_ERROR", "settings: send.per_hour: must be a whole number from 1 to 100000"));
     let r = await run(["settings", "set", "send.per_hour", "1000000"]);
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("code: bad_request");
-    expect(r.out).not.toContain("(set)");
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("code: VALIDATION_ERROR");
+    expect(r.out).not.toContain("action: set");
     fake.route("PATCH /v1/settings", () => ({ body: { settings: fake.settings, effective_retain_days: 90 } }));
     r = await run(["scope", "set", "tagged"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("bad_response");
+    expect(r.out).toContain("UNEXPECTED_RESPONSE");
   });
 });
 
@@ -574,10 +595,11 @@ describe("accounts and the home view", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("accounts[2]{name,state,scope}:");
     expect(r.out).toContain("example,connected,tagged");
-    expect(r.out).toContain("other,stopped,null");
-    // Not installed as a service: the hint is install or run, not start.
+    expect(r.out).toContain("other,\"unavailable (DAEMON_NOT_RUNNING: The daemon of account other is not running.)\",?");
+    expect(r.out).toContain("count: 2 of 2");
+    expect(r.out).not.toContain("null");
+    // Not installed as a service: the hint is install, not start.
     expect(r.out).toContain("whatsapp-axi daemon install other");
-    expect(r.out).toContain("whatsapp-axi daemon run other");
     expect(r.out).not.toContain("daemon start other");
     r = await run(["accounts", "--fields", "phone"]);
     expect(r.out).toContain("{name,state,scope,phone}");
@@ -592,12 +614,12 @@ describe("accounts and the home view", () => {
     fake.route("GET /v1/settings", () => ({ raw: "garbage" }));
     let r = await run(["accounts"]);
     expect(r.code, r.out).toBe(0);
-    expect(r.out).toContain("example,error (bad_response),null");
-    expect(r.out).toContain("daemon status example");
-    fake.route("GET /v1/status", () => apiError(500, "internal", "Internal error in the daemon; see its log."));
+    expect(r.out).toContain("example,\"unavailable (UNEXPECTED_RESPONSE:");
+    expect(r.out).toContain("whatsapp-axi doctor");
+    fake.route("GET /v1/status", () => apiError(500, "INTERNAL_ERROR", "Internal error in the daemon; see its log."));
     r = await run([]);
     expect(r.code, r.out).toBe(0);
-    expect(r.out).toContain("example,error (internal),null");
+    expect(r.out).toContain("example,\"unavailable (INTERNAL_ERROR: Internal error in the daemon; see its log.)\",?");
     const { ROW_TIMEOUT } = await import("../src/commands/accounts.js");
     const saved = ROW_TIMEOUT.ms;
     ROW_TIMEOUT.ms = 200;
@@ -608,11 +630,11 @@ describe("accounts and the home view", () => {
       r = await run(["accounts"]);
       expect(r.code, r.out).toBe(0);
       expect(Date.now() - t0).toBeLessThan(2000);
-      expect(r.out).toContain("example,not answering,null");
-      expect(r.out).toContain("other,stopped,null");
+      expect(r.out).toContain("example,\"unavailable (TIMEOUT:");
+      expect(r.out).toContain("other,\"unavailable (DAEMON_NOT_RUNNING:");
       r = await run([]);
       expect(r.code).toBe(0);
-      expect(r.out).toContain("example,not answering,null");
+      expect(r.out).toContain("example,\"unavailable (TIMEOUT:");
     } finally {
       ROW_TIMEOUT.ms = saved;
     }
@@ -625,8 +647,9 @@ describe("accounts and the home view", () => {
     writeFileSync(join(units, "whatsapp-axi@.service"), "");
     writeFileSync(join(units, "default.target.wants", "whatsapp-axi@other.service"), "");
     const r = await run([]);
-    expect(r.out).toContain("other,stopped,null");
+    expect(r.out).toContain("other,\"unavailable (DAEMON_NOT_RUNNING:");
     expect(r.out).toContain("whatsapp-axi daemon start other");
+    expect(r.out.trim().split("\n").pop()).toContain("--help` to see the full command list");
   });
 
   it("says so when there are no accounts", async () => {
@@ -639,12 +662,12 @@ describe("accounts and the home view", () => {
     expect(r.out).toContain("0 accounts");
     r = await run(["chats"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: no_account");
+    expect(r.out).toContain("code: NO_ACCOUNT");
   });
 });
 
 describe("doctor", () => {
-  it("reports ok checks and warnings", async () => {
+  it("reports ok checks", async () => {
     const wake = join(env.home, "wake");
     fake.settings.wake_file = wake;
     const r = await run(["doctor"]);
@@ -659,15 +682,17 @@ describe("doctor", () => {
 
   it("names the fix for a stopped daemon, loose modes and a stale phone", async () => {
     addAccount(env, "other");
-    chmodSync(join(env.home, "config", "whatsapp-axi", "other", "settings.json"), 0o644);
+    chmodSync(join(env.home, "config", "whatsapp-axi", "accounts", "other", "settings.json"), 0o644);
     fake.route("GET /v1/status", () => ({ body: { ...STATUS, state: "logged_out", reason: "removed on the phone", last_phone_activity: "2020-01-01T00:00:00Z" } }));
     const r = await run(["doctor"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("other,daemon,fail,not running");
-    expect(r.out).toContain("whatsapp-axi daemon start other");
+    expect(r.out).toContain("other,daemon,fail,\"DAEMON_NOT_RUNNING:");
+    expect(r.out).toContain("Run `whatsapp-axi daemon install other` to fix daemon of other");
     expect(r.out).toContain("chmod 600");
+    expect(r.out).toContain("other,link,skipped,needs the daemon answering");
     expect(r.out).toContain("example,state,fail");
-    expect(r.out).toContain("example,phone,warn");
+    expect(r.out).toContain("example,phone,fail");
+    expect(r.out).not.toContain("warn");
   });
 
   it("checks one account, and an unknown one fails", async () => {
@@ -675,7 +700,10 @@ describe("doctor", () => {
     expect(r.code).toBe(0);
     r = await run(["doctor", "--account", "nobody"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("no such account");
+    expect(r.out).toContain("nobody,files,fail,no such account");
+    r = await run(["doctor", "--summary"]);
+    expect(r.code).toBe(0);
+    expect(r.out.trim()).toMatch(/^doctor: all \d+ checks passed$/);
   });
 });
 
@@ -687,16 +715,22 @@ describe("account add, account remove and daemon run", () => {
   }
 
   it("adds an account by running the daemon's init; existing is a no-op", async () => {
-    const cfg = join(env.home, "config", "whatsapp-axi");
+    const cfg = join(env.home, "config", "whatsapp-axi", "accounts");
     fakeBinary(`[ "$1" = init ] && [ "$2" = --account ] && mkdir -p "${cfg}/$3" && echo '{}' > "${cfg}/$3/settings.json" && exit 0; exit 9`);
     let r = await run(["account", "add", "fresh"]);
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("created: true");
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("action: created");
+    expect(r.out).toContain("account: fresh");
     r = await run(["account", "add", "fresh"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("already exists (no-op)");
     r = await run(["account", "add", "Not-Valid"]);
     expect(r.code).toBe(2);
+    for (const reserved of ["accounts", "config.json"]) {
+      r = await run(["account", "add", reserved]);
+      expect(r.code, reserved).toBe(2);
+      expect(r.out).toContain("code: VALIDATION_ERROR");
+    }
     fakeBinary(`echo "whatsapp-axid init: disk full" >&2; exit 1`);
     r = await run(["account", "add", "broken"]);
     expect(r.code).toBe(1);
@@ -706,16 +740,18 @@ describe("account add, account remove and daemon run", () => {
   it("removes an account only with the name repeated, and refuses while its daemon runs", async () => {
     let r = await run(["account", "remove", "example"]);
     expect(r.code).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
     r = await run(["account", "remove", "example", "--confirm", "other"]);
     expect(r.code).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
     fakeBinary(`echo 'whatsapp-axid remove: account "example": its daemon is running; stop it first: already running' >&2; exit 1`);
     r = await run(["account", "remove", "example", "--confirm", "example"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: daemon_running");
+    expect(r.out).toContain("code: DAEMON_RUNNING");
     fakeBinary(`[ "$1" = remove ] && exit 0; exit 9`);
     r = await run(["account", "remove", "example", "--confirm", "example"]);
     expect(r.code).toBe(0);
-    expect(r.out).toContain("removed: true");
+    expect(r.out).toContain("action: deleted");
     r = await run(["account", "remove", "nobody", "--confirm", "nobody"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain("does not exist (no-op)");
@@ -728,10 +764,10 @@ describe("account add, account remove and daemon run", () => {
     fakeBinary(`echo "whatsapp-axid run: already running" >&2; exit 1`);
     r = await run(["daemon", "run", "example"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: daemon_exited");
+    expect(r.out).toContain("code: DAEMON_EXITED");
     r = await run(["daemon", "run", "nobody"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("no_account");
+    expect(r.out).toContain("NO_ACCOUNT");
     r = await run(["daemon", "run", "example", "--log-level", "loud"]);
     expect(r.code).toBe(2);
   });
@@ -740,6 +776,6 @@ describe("account add, account remove and daemon run", () => {
     process.env.WHATSAPP_AXI_DAEMON = join(env.home, "missing");
     const r = await run(["account", "add", "fresh"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("daemon_binary_missing");
+    expect(r.out).toContain("DAEMON_BINARY_MISSING");
   });
 });

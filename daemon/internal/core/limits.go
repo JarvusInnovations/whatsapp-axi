@@ -71,11 +71,11 @@ func (l *limiter) check(now time.Time, lim settings.Send, chat, text string) *AP
 		}
 	}
 	if len(lastMinute) >= lim.PerMinute {
-		return &APIError{Status: http.StatusTooManyRequests, Code: "rate_limited", RetryAfter: retry(lastMinute[len(lastMinute)-lim.PerMinute], time.Minute),
+		return &APIError{Status: http.StatusTooManyRequests, Code: "RATE_LIMITED", RetryAfter: retry(lastMinute[len(lastMinute)-lim.PerMinute], time.Minute),
 			Message: "The account has reached its limit of sends per minute (send.per_minute)."}
 	}
 	if len(l.sends) >= lim.PerHour {
-		return &APIError{Status: http.StatusTooManyRequests, Code: "rate_limited", RetryAfter: retry(l.sends[len(l.sends)-lim.PerHour], time.Hour),
+		return &APIError{Status: http.StatusTooManyRequests, Code: "RATE_LIMITED", RetryAfter: retry(l.sends[len(l.sends)-lim.PerHour], time.Hour),
 			Message: "The account has reached its limit of sends per hour (send.per_hour)."}
 	}
 	if strings.TrimSpace(text) != "" {
@@ -84,7 +84,7 @@ func (l *limiter) check(now time.Time, lim settings.Send, chat, text string) *AP
 			chats[u.chat] = true
 		}
 		if !chats[chat] && len(chats) >= lim.SameTextChats {
-			return &APIError{Status: http.StatusTooManyRequests, Code: "duplicate_text",
+			return &APIError{Status: http.StatusTooManyRequests, Code: "DUPLICATE_TEXT",
 				Message: "The same text already went to the most chats allowed in ten minutes (send.same_text_chats)."}
 		}
 	}

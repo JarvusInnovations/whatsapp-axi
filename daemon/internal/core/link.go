@@ -46,21 +46,21 @@ func conflict(code, state, format string, a ...any) *APIError {
 
 // WhatsAppError is a failure WhatsApp reported, with a cleaned-up reason.
 func WhatsAppError(msg string) *APIError {
-	return &APIError{Status: http.StatusBadGateway, Code: "whatsapp_error", Message: msg}
+	return &APIError{Status: http.StatusBadGateway, Code: "UPSTREAM_ERROR", Message: msg}
 }
 
 // OutcomeUnknown is a send whose result the daemon could not determine: it may have gone out.
 func OutcomeUnknown(what string) *APIError {
-	return &APIError{Status: http.StatusGatewayTimeout, Code: "outcome_unknown", Message: fmt.Sprintf("%s: the daemon could not tell whether WhatsApp accepted it; it may have gone out.", what)}
+	return &APIError{Status: http.StatusGatewayTimeout, Code: "OUTCOME_UNKNOWN", Message: fmt.Sprintf("%s: the daemon could not tell whether WhatsApp accepted it; it may have gone out.", what)}
 }
 
 // notConnected is the error of a request that needs a live connection.
 func (a *Account) notConnected(what string) *APIError {
 	st, _, _ := a.State()
 	if st == "unlinked" || st == "logged_out" {
-		return conflict("not_linked", st, "%s needs a linked account; this one has no session (state %s).", what, st)
+		return conflict("NOT_LINKED", st, "%s needs a linked account; this one has no session (state %s).", what, st)
 	}
-	return conflict("not_connected", st, "%s needs a live connection to WhatsApp; the account is %s.", what, st)
+	return conflict("NOT_CONNECTED", st, "%s needs a live connection to WhatsApp; the account is %s.", what, st)
 }
 
 // BeginLink validates a link request and claims the single link slot. The caller must call
@@ -84,7 +84,7 @@ func (a *Account) BeginLink(b LinkBody) (client.LinkRequest, error) {
 	a.linkMu.Lock()
 	defer a.linkMu.Unlock()
 	if a.linking {
-		return req, conflict("link_in_progress", "linking", "A link attempt is already running for this account.")
+		return req, conflict("LINK_IN_PROGRESS", "linking", "A link attempt is already running for this account.")
 	}
 	st, _, _ := a.State()
 	if st != "unlinked" && st != "logged_out" {
@@ -147,20 +147,20 @@ func (a *Account) RunLink(ctx context.Context, req client.LinkRequest, emit func
 	next, why := "unlinked", ""
 	switch {
 	case errors.Is(err, client.ErrWrongNumber):
-		fail = &APIError{Code: "wrong_number", Message: "The phone that completed the link is not the number given to auth link, so the pairing was refused."}
+		fail = &APIError{Code: "WRONG_NUMBER", Message: "The phone that completed the link is not the number given to auth link, so the pairing was refused."}
 		why = "pairing refused: a different phone number"
 	case errors.Is(err, client.ErrOutdated):
-		fail = &APIError{Code: "outdated", Message: "WhatsApp rejected this client as too old. Upgrade to a release built on a newer library."}
+		fail = &APIError{Code: "CLIENT_OUTDATED", Message: "WhatsApp rejected this client as too old. Upgrade to a release built on a newer library."}
 		next, why = "outdated", "WhatsApp rejected the client as too old"
 	case errors.Is(err, client.ErrLinkTimeout), errors.Is(lctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil:
-		fail = &APIError{Code: "link_timeout", Message: "The link window closed before the phone completed the link."}
+		fail = &APIError{Code: "LINK_TIMEOUT", Message: "The link window closed before the phone completed the link."}
 		why = "the link window closed"
 	case ctx.Err() != nil:
-		fail = &APIError{Code: "link_cancelled", Message: "The link attempt was abandoned because the client went away."}
+		fail = &APIError{Code: "LINK_CANCELLED", Message: "The link attempt was abandoned because the client went away."}
 		why = "the link attempt was abandoned"
 	default:
 		a.log.Warn("link failed", "err", err)
-		fail = &APIError{Code: "whatsapp_error", Message: "WhatsApp failed the link attempt; see the daemon's log."}
+		fail = &APIError{Code: "UPSTREAM_ERROR", Message: "WhatsApp failed the link attempt; see the daemon's log."}
 		why = "the link attempt failed"
 	}
 	finish(next, why)
@@ -179,7 +179,7 @@ func (a *Account) Logout(ctx context.Context) (*LogoutResult, error) {
 	linking := a.linking
 	a.linkMu.Unlock()
 	if linking {
-		return nil, conflict("link_in_progress", "linking", "A link attempt is running; wait for it to end.")
+		return nil, conflict("LINK_IN_PROGRESS", "linking", "A link attempt is running; wait for it to end.")
 	}
 	st, _, _ := a.State()
 	if st != "connected" {

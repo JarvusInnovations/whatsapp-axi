@@ -1,16 +1,51 @@
-// Shared command plumbing: choosing the account (specs/cli.md "Choosing the account"), the daemon
+// Shared command plumbing: the per-invocation context (accounts, time zone, exit code), the daemon
 // client, and small output helpers.
-import { Daemon } from "./client.js";
+import { readFileSync } from "node:fs";
+import { Daemon, expect } from "./client.js";
 import { SystemdUser, type ServiceManager } from "./service.js";
-import { failure, usage } from "./errors.js";
-import { accountExists, listAccounts, roots, validAccount, accountPaths, type Roots } from "./paths.js";
+import { accountEntries, resolveAccount, type AccountSource, type Resolved } from "./config.js";
+import { accountPaths, roots, type Env, type Roots } from "./paths.js";
+import { localTime, systemZone } from "./output/time.js";
+import type { CommandSpec } from "./flags.js";
+
+/** What main(argv, io) takes from its caller: environment, working directory, clock and output. */
+export interface Io {
+  env: Env;
+  cwd: string;
+  now: () => number;
+  stdout: { write: (chunk: string) => unknown };
+  stdin: () => string;
+}
+
+export function processIo(): Io {
+  return {
+    env: process.env,
+    cwd: process.cwd(),
+    now: () => Date.now(),
+    stdout: process.stdout,
+    stdin: () => readFileSync(0, "utf-8"),
+  };
+}
 
 export interface Ctx {
+  io: Io;
   roots: Roots;
-  /** The daemon client of an account; timeoutMs shortens its request limit (the home view). */
+  /** The daemon client of an account; timeoutMs shortens its request limit (home, hook, doctor). */
   daemon(account: string, timeoutMs?: number): Daemon;
   /** The service manager of the daemon commands (systemd user services on Linux). */
   service: ServiceManager;
+  // ---- per invocation, set by the dispatcher ----
+  /** The command's own arguments as typed, without the global flags. */
+  argv: string[];
+  spec?: CommandSpec;
+  accountFlag?: string;
+  tz: string;
+  /** Set when a time was printed, so the output names the zone once. */
+  tzUsed: boolean;
+  /** The account the command acted on, for the `account:` line. */
+  acted?: Resolved;
+  /** Raised by a command that prints its result and still fails (a failed mark, a failed export). */
+  exitCode: number;
 }
 
 let serviceFactory: () => ServiceManager = () => new SystemdUser();
@@ -20,39 +55,61 @@ export function setServiceFactory(f: () => ServiceManager): void {
   serviceFactory = f;
 }
 
-export function defaultCtx(): Ctx {
-  const r = roots();
-  return { roots: r, daemon: (a, t) => new Daemon(a, accountPaths(a, r).socket, t), service: serviceFactory() };
+/** The timeout of reads: 30 s, or WHATSAPP_AXI_TIMEOUT_MS. */
+export function readTimeoutMs(env: Env): number {
+  const v = env.WHATSAPP_AXI_TIMEOUT_MS?.trim();
+  if (v && /^[0-9]+$/.test(v) && Number(v) > 0) return Number(v);
+  return 30_000;
 }
 
-/** Resolves --account: required with several accounts, optional with exactly one. */
-export function chooseAccount(ctx: Ctx, flag: unknown, command: string): string {
-  const accounts = listAccounts(ctx.roots);
-  if (typeof flag === "string") {
-    if (!validAccount(flag)) throw usage(`bad account name ${JSON.stringify(flag)}: names match ^[a-z][a-z0-9-]{0,23}$`);
-    if (!accounts.includes(flag)) {
-      throw failure(`No account named ${flag}.`, "no_account", [
-        accounts.length ? `Accounts: ${accounts.join(", ")}` : "There are no accounts yet",
-        `Run \`whatsapp-axi account add ${flag}\` to create it`,
-      ]);
-    }
-    return flag;
+export function makeCtx(io: Io): Ctx {
+  const r = roots(io.env);
+  const ctx: Ctx = {
+    io,
+    roots: r,
+    service: serviceFactory(),
+    argv: [],
+    tz: systemZone(),
+    tzUsed: false,
+    exitCode: 0,
+    daemon: (a, t) => new Daemon(a, accountPaths(a, r).socket, t ?? readTimeoutMs(io.env), acctFlag(ctx, a), t === undefined),
+  };
+  return ctx;
+}
+
+/** Resolves the account of the running command, and records it for the `account:` line. */
+export function account(ctx: Ctx, opts: { positional?: string; mutation?: boolean } = {}): string {
+  const spec = ctx.spec;
+  const res = resolveAccount({
+    roots: ctx.roots,
+    env: ctx.io.env,
+    flag: ctx.accountFlag,
+    positional: opts.positional,
+    mutation: opts.mutation ?? spec?.mutation === true,
+    argv: [...(spec?.name.split(" ") ?? []), ...ctx.argv],
+    command: spec?.name ?? "",
+  });
+  ctx.acted = res;
+  return res.name;
+}
+
+export type { AccountSource };
+
+/** Carries --account into suggested commands only when the user has more than one account. */
+export function acctFlag(ctx: Ctx, name: string): string {
+  try {
+    return accountEntries(ctx.roots).length > 1 ? ` --account ${name}` : "";
+  } catch {
+    return ` --account ${name}`;
   }
-  if (accounts.length === 1) return accounts[0];
-  if (accounts.length === 0) {
-    throw failure("There are no accounts yet.", "no_account", ["Run `whatsapp-axi account add <name>` to create one"]);
-  }
-  throw usage(`--account is required: there are ${accounts.length} accounts (${accounts.join(", ")})`, [
-    `Run \`whatsapp-axi ${command} --account <name>\` with one of: ${accounts.join(", ")}`,
-  ]);
 }
 
-export function requireAccountName(name: string): string {
-  if (!validAccount(name)) throw usage(`bad account name ${JSON.stringify(name)}: names match ^[a-z][a-z0-9-]{0,23}$ (a local label, not a phone number)`);
-  return name;
+/** An instant in the output's zone; marks the zone as used so the output names it. */
+export function time(ctx: Ctx, iso: unknown): string | undefined {
+  if (typeof iso !== "string" || !iso) return undefined;
+  ctx.tzUsed = true;
+  return localTime(iso, ctx.tz);
 }
-
-export { accountExists };
 
 /** Truncates text for a list cell. */
 export function cell(text: unknown, max = 80): string {
@@ -65,16 +122,22 @@ export const DETAIL_LIMIT = 1500;
 /** Truncates long text in a detail view, saying how long it was. */
 export function longText(text: string, full: boolean): { text: string; truncated: boolean } {
   if (full || text.length <= DETAIL_LIMIT) return { text, truncated: false };
-  return { text: `${text.slice(0, DETAIL_LIMIT)}... (truncated, ${text.length} chars total)`, truncated: true };
+  return { text: `${text.slice(0, DETAIL_LIMIT)}… (truncated, ${text.length} chars total)`, truncated: true };
 }
 
-/** Builds list rows from objects, keeping only the chosen keys in order. */
+/** Builds list rows from objects, keeping only the chosen keys in order (absent cells print as "-"). */
 export function pick<T extends Record<string, unknown>>(rows: T[], keys: string[]): Record<string, unknown>[] {
   return rows.map((r) => Object.fromEntries(keys.map((k) => [k, r[k] ?? null])));
 }
 
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
+}
+
+/** "N of M", the size of a list against the whole. A missing total is UNEXPECTED_RESPONSE, never invented. */
+export function countOf(d: Daemon, n: number, total: unknown): string {
+  expect(d, typeof total === "number" && total >= n, "a list without a numeric total");
+  return `${n} of ${total}`;
 }
 
 /** What a mark did, as the daemon reports it (specs/daemon.md "Receipts and typing"). */
@@ -85,13 +148,14 @@ export interface MarkOutcome {
   reason?: string;
 }
 
-export function asMarkOutcome(v: unknown): MarkOutcome | undefined {
+/** A mark answer; every count must be there (fail closed). */
+export function asMarkOutcome(d: Daemon, v: unknown): MarkOutcome {
   const o = v as Record<string, unknown> | null | undefined;
-  if (!o || typeof o !== "object" || typeof o.marked !== "number") return undefined;
+  expect(d, o && typeof o === "object" && typeof o.marked === "number" && typeof o.already_marked === "number" && typeof o.failed === "number", "a mark answer without marked, already_marked and failed");
   return {
-    marked: o.marked,
-    already_marked: typeof o.already_marked === "number" ? o.already_marked : 0,
-    failed: typeof o.failed === "number" ? o.failed : 0,
+    marked: o.marked as number,
+    already_marked: o.already_marked as number,
+    failed: o.failed as number,
     ...(typeof o.reason === "string" && o.reason ? { reason: o.reason } : {}),
   };
 }
@@ -100,20 +164,18 @@ export function asMarkOutcome(v: unknown): MarkOutcome | undefined {
 export function markFix(reason: string | undefined, af: string, retry: string): string {
   switch (reason) {
     case "off":
-      return `read_receipts is off, so no read receipt is sent; run \`whatsapp-axi settings set read_receipts on-read${af}\` to send them, then \`${retry}\``;
+      return `Run \`whatsapp-axi settings set read_receipts on-read${af}\` to send read receipts, then \`${retry}\``;
     case "not_connected":
-      return `The account is not connected; run \`whatsapp-axi doctor${af}\`, then \`${retry}\` once it is connected`;
+      return `Run \`whatsapp-axi doctor${af}\` to see why the account is not connected, then \`${retry}\``;
     default:
-      return `WhatsApp did not take the read receipt; run \`${retry}\` to try again (the daemon's log has the cause)`;
+      return `Run \`${retry}\` to try the read receipts again (the daemon's log has the cause)`;
   }
 }
 
-/**
- * Sets exit code 1 when a mark that was asked for was not fully sent; the command still prints what
- * it read. Returns the help line naming the fix, or undefined when everything was marked.
- */
-export function markFailed(m: MarkOutcome | undefined, af: string, retry: string): string | undefined {
-  if (!m || m.failed === 0) return undefined;
-  process.exitCode = 1;
-  return markFix(m.reason, af, retry);
+/** The error part of an output whose mark failed (specs/conventions.md: failed marks use the error shape). */
+export function markError(ctx: Ctx, m: MarkOutcome, af: string, retry: string): { error: string; code: string; help: string[] } {
+  ctx.exitCode = 1;
+  const what = m.marked ? `${m.marked} marked read, ${m.failed} not marked` : `${m.failed} not marked read`;
+  return { error: `${what} (${m.reason ?? "unknown reason"})`, code: "MARK_FAILED", help: [markFix(m.reason, af, retry)] };
 }
+

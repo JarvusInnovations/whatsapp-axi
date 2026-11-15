@@ -5,13 +5,16 @@ account is linked, how it behaves while connected, and how it is kept running an
 
 ## Subcommands of the binary
 
-The CLI is the interface people use; these are what it runs underneath.
+The CLI is the interface people use; these are what it runs underneath. Their own errors are
+plain lines on standard error with a non-zero exit, and the CLI turns each into one of its codes
+([conventions.md](conventions.md), "The daemon binary").
 
 | Subcommand | Does |
 | --- | --- |
 | `whatsapp-axid run --account <name>` | runs the account's daemon in the foreground until signalled |
 | `whatsapp-axid init --account <name>` | creates the account's directories and a default `settings.json`, then exits. Fails if the account exists |
 | `whatsapp-axid remove --account <name>` | deletes the account's config and state. Refuses while that account's daemon holds the lock |
+| `whatsapp-axid migrate --account <name>` | moves an account from the old layout, directly under the config and state roots, into `accounts/` ([conventions.md](conventions.md), "Moving an existing account"). Refuses while that account's daemon holds the lock at the old place; moves nothing when the account is already in place |
 | `whatsapp-axid version` | prints the daemon version and the library version it was built with |
 
 ## Starting
@@ -183,8 +186,9 @@ and is built later.
   empty log, when the journal cannot be read.
 - `daemon install` copies the daemon binary that came with the CLI to `<data>/bin/whatsapp-axid`,
   writes the unit, and enables and starts the service.
-- `daemon upgrade` copies the current binary over the installed one and restarts every installed
-  account's service for that user.
+- `daemon upgrade` copies the current binary over the installed one, restarts every installed
+  account's service for that user, waits for each daemon to answer, and prints one row per
+  account, including when a later one fails.
 - The CLI and the daemon each report a version. `doctor` compares the CLI, the installed binary and
   the running daemon, and says which step fixes a mismatch.
 - `outdated` is fixed only by a release built on a newer library. `doctor` says so, and names the
@@ -212,3 +216,16 @@ and records calls; no test connects to WhatsApp.
 - Typing is cleared by a send to that chat, by a stop request, and by the two-minute limit.
 - Settings: unknown keys rejected; a change over the socket is durable and atomic.
 - `daemon install --dry-run` prints the unit and the binary path without changing anything.
+
+## Principles
+
+**Inherited** ([principles.md](principles.md)):
+
+- *The daemon decides what is kept*: one process holds the session and applies the scope.
+- *One Unix user, one trust boundary*: the files and the socket are the user's alone.
+- *Unknown is said as unknown*: the stopped states stay up and say what happened.
+- *What others see is true*: presence, receipts and typing only as specified.
+- *Modest by default, loosened on purpose*: the settings that guard sends change only with
+  `confirm`.
+
+**Local:** none.
