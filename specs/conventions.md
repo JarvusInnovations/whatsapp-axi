@@ -64,6 +64,7 @@ Inside streams: a link attempt's final line carries `WRONG_NUMBER`, `CLIENT_OUTD
 | `SERVICE_FAILED`, `SERVICE_NOT_READY` | 1 | the service manager refused, or the daemon did not come up |
 | `LINGER_OFF` | 1 | lingering is off; names the command that turns it on |
 | `LOGS_FAILED` | 1 | the journal could not be read |
+| `UPDATE_FAILED` | 1 | `update` could not install the new version |
 | `SETUP_FAILED` | 1 | a hook file could not be written |
 | `NO_PROJECT` | 1 | project scope asked for outside any project |
 | `INTERNAL_ERROR` | 1 | anything not anticipated |
@@ -85,6 +86,17 @@ Inside streams: a link attempt's final line carries `WRONG_NUMBER`, `CLIENT_OUTD
   skipped so that another account becomes "the only one".
 - **An unreadable service directory is an error**, never "not installed".
 - **An unreadable hook target is `error`**, never "not installed".
+- **A service state that cannot be read is an error.** When the service manager's query fails
+  (no user bus, a non-zero exit), `daemon status`, `stop`, `start` and `restart` answer
+  `SERVICE_FAILED`. They never print `unknown` with exit 0, and never "already stopped".
+  `daemon stop` reports `stopped` only once the unit is seen inactive, waiting the way a start
+  waits for ready, and answers `SERVICE_FAILED` if it stays active.
+- **A journal that cannot be read is `LOGS_FAILED`.** `-- No entries --` with nothing else on
+  stderr is an empty log. Any other stderr line, such as "No journal files were found", or no
+  output at all, is `LOGS_FAILED`, never `0 lines`.
+- **A foreground daemon that was killed did not stop cleanly.** `daemon run` exits 0 only for
+  an interrupt or terminate signal the CLI itself passed on. Any other signal is
+  `DAEMON_EXITED`, naming the signal.
 - A state file that exists and does not parse is never overwritten.
 - Reads have a 30-second deadline, changed with `WHATSAPP_AXI_TIMEOUT_MS`, which the `TIMEOUT`
   error names. Home, the hook and `doctor` probes have two seconds each and run in parallel.
@@ -165,6 +177,10 @@ message.
 QR, then one result block. Neither has a deadline of its own: a follow runs until interrupted,
 and a link ends with WhatsApp's window.
 
+A follow that loses the daemon ends with `STREAM_CLOSED` (or `DAEMON_UNREACHABLE` when the
+connection itself failed), never an internal error, and prints the last `seq` it delivered
+with the command that resumes from it.
+
 ## Mutations
 
 **Result shape.** Every mutation prints `action:` from this closed set: `sent`,
@@ -198,12 +214,20 @@ one row per account with what happened, including when a later one fails.
 | `settings set` of `wake_file`, `retain_days` (lowering), `presence`, `read_receipts` | none | changes the account's own behaviour, widens nothing |
 | `settings set retain_days` raised, or to unlimited | `--confirm` | keeps other people's messages longer |
 | `settings set send.first_contact allow`; a send limit raised | `--confirm` | loosens a safeguard |
-| `scope set full` (account or chat); `scope dm-from anyone` | `--confirm` | widens what the account reads |
+| `scope set` that widens any chat's effective scope; `scope dm-from anyone` | `--confirm` | widens what the account reads |
 | `operators add` | `--confirm` | under `dm_from: operators` it widens whose direct messages are kept |
 | `operators remove`, any tightening | none | |
 | `forget`, `auth logout`, `daemon uninstall` | `--confirm` | destroys kept content, the session, or the service |
 | `account remove <name>` | `--confirm <name>` | destroys an account and its data |
 | `account add`, `account use`, `daemon install`, `start`, `stop`, `restart`, `upgrade`, `setup hooks`, `setup hooks uninstall` | none | local, reversible, the operator's own machine |
+
+**Widening is judged by effect, not by the value asked for.** The scopes order as
+`none` < `dm-only` < `tagged` < `full`. A scope change is gated when any chat's effective scope
+(its own override, or the account's scope where it has none) is wider after the change than
+before. That covers the account's scope raised at any step (`dm-only` to `tagged` as much as
+to `full`), a chat's override raised, and an override removed where the account's scope is
+wider than the override was. A hint that undoes a tightening carries `--confirm` when the undo
+is gated.
 
 The daemon enforces every `--confirm` that concerns its settings, so no caller can skip one.
 There is no prompt and no `--force`.
