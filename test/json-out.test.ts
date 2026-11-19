@@ -1,6 +1,6 @@
 // --json-out[=path] (specs/cli.md "Conventions"): standard output stays TOON; the daemon's complete
 // response body is also written to an owner-only file.
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -203,10 +203,19 @@ describe("errors", () => {
   it("an unwritable path fails before the daemon is called", async () => {
     let sent = false;
     fake.route("POST /v1/send", () => ((sent = true), { body: SENT }));
-    const r = await run(["send", GROUP, "hi", `--json-out=${join(dir, "missing", "out.json")}`]);
+    let r = await run(["send", GROUP, "hi", `--json-out=${join(dir, "missing", "out.json")}`]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("EXPORT_UNWRITABLE");
+    expect(r.out).toContain("its directory does not exist");
     expect(sent).toBe(false);
+    // A directory that exists but takes no new files is not "does not exist".
+    if (existsSync("/proc/self")) {
+      r = await run(["chats", "--json-out=/proc/x.json"]);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("EXPORT_UNWRITABLE");
+      expect(r.out).not.toContain("does not exist");
+      expect(r.out).toContain("exists but no file can be created in it");
+    }
   });
 });
 
