@@ -122,7 +122,10 @@ describe.skipIf(!ready)("end to end with the real daemon", () => {
     // Settings survived the restart-free stop, and the daemon being down is reported as such.
     r = await run(["scope", "show"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("whatsapp-axi daemon start demo");
+    expect(r.out).toContain("code: DAEMON_NOT_RUNNING");
+    // Not installed as a service: the hint is install or run, never start.
+    expect(r.out).toContain("whatsapp-axi daemon install demo");
+    expect(r.out).not.toContain("daemon start demo");
 
     r = await run(["account", "remove", "demo", "--confirm", "demo"]);
     expect(r.code, r.out).toBe(0);

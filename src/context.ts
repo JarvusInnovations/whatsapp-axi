@@ -1,8 +1,9 @@
 // Shared command plumbing: the per-invocation context (accounts, time zone, exit code), the daemon
 // client, and small output helpers.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Daemon, expect } from "./client.js";
-import { SystemdUser, type ServiceManager } from "./service.js";
+import { SystemdUser, TEMPLATE, unitDir, unitName, type ServiceManager } from "./service.js";
 import { accountEntries, resolveAccount, type AccountSource, type Resolved } from "./config.js";
 import { accountPaths, roots, type Env, type Roots } from "./paths.js";
 import { localTime, systemZone } from "./output/time.js";
@@ -77,7 +78,12 @@ export function makeCtx(io: Io): Ctx {
     tz: systemZone(),
     tzUsed: false,
     exitCode: 0,
-    daemon: (a, t) => new Daemon(a, accountPaths(a, r).socket, t ?? readTimeoutMs(io.env), acctFlag(ctx, a), t === undefined),
+    daemon: (a, t) => {
+      const d = new Daemon(a, accountPaths(a, r).socket, t ?? readTimeoutMs(io.env), acctFlag(ctx, a), t === undefined);
+      // Whether the account is installed as a service, for the DAEMON_NOT_RUNNING hint.
+      d.installed = () => existsSync(join(unitDir(r), "default.target.wants", unitName(a))) && existsSync(join(unitDir(r), TEMPLATE));
+      return d;
+    },
   };
   return ctx;
 }

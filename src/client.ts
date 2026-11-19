@@ -66,11 +66,30 @@ export class Daemon {
     return `Run \`whatsapp-axi doctor${this.af}\` to check the daemon`;
   }
 
+  /** Whether the account is installed as a service; the not-running hint depends on it. */
+  installed?: () => boolean;
+
   notRunning(): ToolError {
-    return failure(`The daemon of account ${this.account} is not running.`, "DAEMON_NOT_RUNNING", [
-      `Run \`${startCommand(this.account)}\` to start it as a service`,
-      `Run \`whatsapp-axi daemon run ${this.account}\` to run it in the foreground instead`,
-    ]);
+    let installed = false;
+    try {
+      installed = this.installed?.() ?? false;
+    } catch {
+      // cannot tell: never suggest starting a service that may not exist
+    }
+    // `daemon start` only for an account installed as a service (specs/cli.md).
+    return failure(
+      `The daemon of account ${this.account} is not running.`,
+      "DAEMON_NOT_RUNNING",
+      installed
+        ? [
+            `Run \`${startCommand(this.account)}\` to start it as a service`,
+            `Run \`whatsapp-axi daemon run ${this.account}\` to run it in the foreground instead`,
+          ]
+        : [
+            `Run \`whatsapp-axi daemon install ${this.account}\` to run it as a service`,
+            `Run \`whatsapp-axi daemon run ${this.account}\` to run it in the foreground instead`,
+          ],
+    );
   }
 
   badResponse(what: string): ToolError {
