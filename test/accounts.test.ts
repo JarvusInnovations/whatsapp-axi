@@ -215,6 +215,34 @@ describe("the accounts/ layout", () => {
     expect(r.out).toContain("alpha,");
   });
 
+  it("home and doctor echo WHATSAPP_AXI_CONFIG_DIR and WHATSAPP_AXI_DAEMON when set", async () => {
+    const other = join(env.home, "elsewhere");
+    mkdirSync(join(other, "accounts", "alpha"), { recursive: true, mode: 0o700 });
+    writeFileSync(join(other, "accounts", "alpha", "settings.json"), "{}", { mode: 0o600 });
+    const bin = join(env.home, "whatsapp-axid-custom");
+    writeFileSync(bin, "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+    const set = { WHATSAPP_AXI_CONFIG_DIR: other, WHATSAPP_AXI_DAEMON: bin };
+    for (const argv of [[], ["doctor"]]) {
+      const r = await run(argv, { env: set });
+      expect(r.out, argv.join(" ")).toContain(`config_dir: ${other} (WHATSAPP_AXI_CONFIG_DIR)`);
+      expect(r.out, argv.join(" ")).toContain(`daemon_binary: ${bin} (WHATSAPP_AXI_DAEMON)`);
+    }
+    // With no accounts at all, home still says where it looked.
+    const empty = join(env.home, "empty");
+    mkdirSync(empty, { recursive: true, mode: 0o700 });
+    let r = await run([], { env: { WHATSAPP_AXI_CONFIG_DIR: empty } });
+    expect(r.out).toContain(`config_dir: ${empty} (WHATSAPP_AXI_CONFIG_DIR)`);
+    // A relative path is ignored, and home says so.
+    r = await run([], { env: { WHATSAPP_AXI_CONFIG_DIR: "relative/dir" } });
+    expect(r.out).toContain("WHATSAPP_AXI_CONFIG_DIR is ignored");
+    // Unset: neither line.
+    for (const argv of [[], ["doctor"]]) {
+      r = await run(argv);
+      expect(r.out).not.toContain("config_dir:");
+      expect(r.out).not.toContain("daemon_binary:");
+    }
+  });
+
   it("a stray file or an old-layout directory is never an account", async () => {
     addLegacyAccount(env, "old");
     mkdirSync(join(cfgRoot(), "accounts"), { recursive: true, mode: 0o700 });

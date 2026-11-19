@@ -7,7 +7,7 @@ import { startCommand, type Status } from "../client.js";
 import { confirmRequired, failure, invalid, reasonOf } from "../errors.js";
 import { accountEntries, pinOf, PIN_VAR, readDefault, writeDefault } from "../config.js";
 import { accountExists, accountPaths, legacyAccounts, validAccount, type AccountEntry } from "../paths.js";
-import { account, acctFlag, type Ctx } from "../context.js";
+import { account, acctFlag, envChoices, type Ctx } from "../context.js";
 import { installedAccounts } from "./daemon.js";
 import { line } from "../output/toon.js";
 
@@ -113,6 +113,7 @@ async function homeView(ctx: Ctx): Promise<unknown> {
       accounts: "0 accounts for this user",
       ...(legacy.length ? { old_layout: legacy.join(", ") } : {}),
       ...(pin ? { account_lock: `${pin} (${PIN_VAR}), which does not exist` } : {}),
+      ...envChoices(ctx),
       help: [...help, DISCOVERY],
     };
   }
@@ -126,6 +127,7 @@ async function homeView(ctx: Ctx): Promise<unknown> {
   if (pin !== undefined)
     out.account_lock = names.includes(pin) ? `${pin} (${PIN_VAR})` : `${pin} (${PIN_VAR}), which does not exist: every command fails with ACCOUNT_LOCK_INVALID`;
   out.writes = writesLine(ctx, names);
+  Object.assign(out, envChoices(ctx));
   const rows = await Promise.all(entries.map((e) => accountRow(ctx, e)));
   out.accounts = rows.map((r) => ({ name: r.name, state: r.state, scope: r.scope }));
   if (legacy.length) out.old_layout = legacy.join(", ");

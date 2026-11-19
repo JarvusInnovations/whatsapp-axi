@@ -31,12 +31,12 @@ export async function update(ctx: Ctx, args: string[]): Promise<unknown> {
   try {
     res = await updater({ args: p.flags.check ? ["--check"] : [], stdout: ctx.io.stdout, env: ctx.io.env as NodeJS.ProcessEnv });
   } catch (err) {
-    // The SDK's own codes are not this tool's; a registry or install failure is the upstream's. Its
+    // The SDK's own codes are not this tool's; any failure to update is UPDATE_FAILED. Its
     // hints are kept: one naming `npm install -g` comes only after the registry returned a version,
     // so the package exists. The platform package follows the main one as an optional dependency.
     const message = err instanceof Error ? err.message : String(err);
     const help = err instanceof AxiError ? err.suggestions : [];
-    throw failure(`update failed: ${message}`, "UPSTREAM_ERROR", help);
+    throw failure(`update failed: ${message}`, "UPDATE_FAILED", help);
   }
   if (p.flags.check) return res;
   let installed: string[] = [];

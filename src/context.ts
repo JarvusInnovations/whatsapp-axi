@@ -88,6 +88,20 @@ export function makeCtx(io: Io): Ctx {
   return ctx;
 }
 
+/**
+ * The choices WHATSAPP_AXI_CONFIG_DIR and WHATSAPP_AXI_DAEMON made, echoed in home and doctor
+ * (specs/conventions.md "Environment variables"). Empty when neither is set.
+ */
+export function envChoices(ctx: Ctx): Record<string, string> {
+  const out: Record<string, string> = {};
+  const cfg = ctx.io.env.WHATSAPP_AXI_CONFIG_DIR;
+  if (ctx.roots.configFromEnv) out.config_dir = `${ctx.roots.config} (WHATSAPP_AXI_CONFIG_DIR)`;
+  else if (cfg) out.config_dir = `${ctx.roots.config} (WHATSAPP_AXI_CONFIG_DIR is ignored: ${cfg} is not an absolute path)`;
+  const bin = ctx.io.env.WHATSAPP_AXI_DAEMON;
+  if (bin) out.daemon_binary = `${bin} (WHATSAPP_AXI_DAEMON)`;
+  return out;
+}
+
 /** Resolves the account of the running command, and records it for the `account:` line. */
 export function account(ctx: Ctx, opts: { positional?: string; mutation?: boolean } = {}): string {
   const spec = ctx.spec;

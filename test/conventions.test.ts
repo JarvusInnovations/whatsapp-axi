@@ -407,7 +407,8 @@ describe("output vocabulary", () => {
       });
       r = await run(["update"]);
       expect(r.code).toBe(1);
-      expect(r.out).toContain("code: UPSTREAM_ERROR");
+      expect(r.out).toContain("code: UPDATE_FAILED");
+      expect(r.out).not.toContain("UPSTREAM_ERROR");
       // A failed upgrade comes after the registry named a version, so its npm hint is kept.
       const { AxiError } = await import("axi-sdk-js");
       setUpdater(async () => {
