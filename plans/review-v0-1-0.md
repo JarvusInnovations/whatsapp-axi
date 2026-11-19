@@ -1,5 +1,6 @@
 ---
-status: in-progress
+status: done
+pr: 32
 depends: [release-packaging]
 specs:
   - specs/sending.md
@@ -45,32 +46,46 @@ SessionStart-only hook, no `--confirm` on sends, systemd-user only).
 
 ## Validation
 
-- [ ] A client error after the send call that is not a refusal answers `OUTCOME_UNKNOWN`, the
+- [x] A client error after the send call that is not a refusal answers `OUTCOME_UNKNOWN`, the
       row stays pending, and a retry with the same id sends nothing new (message and reaction).
-- [ ] An error before the send call is a definite failure and a retry sends.
-- [ ] A 200 send answer that is JSON but not the expected object is `OUTCOME_UNKNOWN`.
-- [ ] `scope set tagged` from `dm-only`, a chat override `none` to `tagged`, and removing a
+- [x] An error before the send call is a definite failure and a retry sends.
+- [x] A 200 send answer that is JSON but not the expected object is `OUTCOME_UNKNOWN`.
+- [x] `scope set tagged` from `dm-only`, a chat override `none` to `tagged`, and removing a
       `none` override under account scope `full` each answer `CONFIRM_REQUIRED` without
       `--confirm`, from the CLI and from a direct socket request.
-- [ ] Removing an override that narrows, and every tightening, needs no `--confirm`.
-- [ ] With a service manager that exits non-zero, `daemon status` and `daemon stop` answer
+- [x] Removing an override that narrows, and every tightening, needs no `--confirm`.
+- [x] With a service manager that exits non-zero, `daemon status` and `daemon stop` answer
       `SERVICE_FAILED`.
-- [ ] `daemon stop` on a unit that stays active answers `SERVICE_FAILED`, not `stopped`.
-- [ ] `daemon logs` with "No journal files were found" on stderr, and with no output, answers
+- [x] `daemon stop` on a unit that stays active answers `SERVICE_FAILED`, not `stopped`.
+- [x] `daemon logs` with "No journal files were found" on stderr, and with no output, answers
       `LOGS_FAILED`; a true empty log still answers `0 lines`.
-- [ ] `daemon run` whose daemon is killed exits non-zero with `DAEMON_EXITED`.
-- [ ] `events --follow` whose daemon goes away ends with `STREAM_CLOSED` or
+- [x] `daemon run` whose daemon is killed exits non-zero with `DAEMON_EXITED`.
+- [x] `events --follow` whose daemon goes away ends with `STREAM_CLOSED` or
       `DAEMON_UNREACHABLE` and the last `seq`.
-- [ ] `DAEMON_NOT_RUNNING` for an account not installed as a service does not suggest
+- [x] `DAEMON_NOT_RUNNING` for an account not installed as a service does not suggest
       `daemon start`.
-- [ ] `chats`, `groups` and `chat view` participants cut at 100 with `N of M` and a hint.
-- [ ] Home and `doctor` echo `WHATSAPP_AXI_CONFIG_DIR` and `WHATSAPP_AXI_DAEMON` when set.
-- [ ] A failed `update` answers `UPDATE_FAILED`.
-- [ ] The rate limit still refuses after a daemon restart inside the window.
-- [ ] The whole gate set passes: lint, format, typecheck, build, docs check, scrub, licence
+- [x] `chats`, `groups` and `chat view` participants cut at 100 with `N of M` and a hint.
+- [x] Home and `doctor` echo `WHATSAPP_AXI_CONFIG_DIR` and `WHATSAPP_AXI_DAEMON` when set.
+- [x] A failed `update` answers `UPDATE_FAILED`.
+- [x] The rate limit still refuses after a daemon restart inside the window.
+- [x] The whole gate set passes: lint, format, typecheck, build, docs check, scrub, licence
       gate, `go vet`, `go test`, the CLI tests and the packed-tarball install test.
 
 ## Risks
 
 - Classifying "proven refusal" too narrowly leaves rows pending that did fail. That is the safe
   side: the operator checks `read <chat>` and retries under a new id.
+
+## Notes
+
+- The send classifier reads `SendMessage`'s debug timings (`Send`, `Resp`, `Retry`) to tell
+  whether the frame write was reached, checked against the pinned whatsmeow's `send.go` and
+  `request.go`. A disconnect or a timeout is outcome-unknown even without timings.
+- Reactions carry no send id. A reaction whose outcome is unknown answers `OUTCOME_UNKNOWN` and
+  records nothing; running it again sends the same emoji again, which sets the same reaction.
+- Rate counts persist in a new `send_times` table (schema version 3), times only, pruned after
+  an hour.
+
+## Follow-ups
+
+None.
