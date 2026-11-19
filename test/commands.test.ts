@@ -377,6 +377,44 @@ describe("bounded lists", () => {
     expect(r.out).not.toContain("limit cut");
     expect((await run(["chats", "--limit", "0"])).code).toBe(2);
   });
+
+  it("chats, groups and chat view participants stop at 100 by default, with N of M and a hint", async () => {
+    const rows = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `1203630000000${String(i).padStart(5, "0")}@g.us`,
+        name: `g${i}`,
+        type: "group",
+        scope: "tagged",
+        members: 3,
+      }));
+    fake.route("GET /v1/chats", ({ query }) => {
+      expect(query.get("limit")).toBe("100");
+      return { body: { chats: rows(100), total: 250 } };
+    });
+    let r = await run(["chats"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("count: 100 of 250");
+    expect(r.out).toContain("whatsapp-axi chats --limit 250");
+    fake.route("GET /v1/groups", ({ query }) => {
+      expect(query.get("limit")).toBe("100");
+      return { body: { groups: rows(100), total: 130 } };
+    });
+    r = await run(["groups"]);
+    expect(r.out).toContain("count: 100 of 130");
+    expect(r.out).toContain("whatsapp-axi groups --limit 130");
+    const people = Array.from({ length: 150 }, (_, i) => ({ id: `${100000000001000 + i}@lid`, name: `p${i}`, me: false, operator: false, contact: false }));
+    fake.route("GET /v1/chats/*", () => ({ body: { chat: { id: GROUP, name: "Big group", type: "group", scope: "tagged", participants: people } } }));
+    r = await run(["chat", "view", GROUP]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("participants: 100 of 150");
+    expect(r.out).toContain("participants[100]{id,name,marks}:");
+    expect(r.out).toContain(`whatsapp-axi chat view ${GROUP} --limit 150`);
+    r = await run(["chat", "view", GROUP, "--limit", "150"]);
+    expect(r.out).toContain("participants: 150 of 150");
+    expect(r.out).toContain("participants[150]{id,name,marks}:");
+    expect(r.out).not.toContain("--limit 150`");
+    expect((await run(["chat", "view", GROUP, "--limit", "0"])).code).toBe(2);
+  });
 });
 
 describe("groups", () => {

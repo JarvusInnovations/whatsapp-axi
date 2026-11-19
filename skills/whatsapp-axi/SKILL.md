@@ -68,7 +68,7 @@ expect it.
 
 - `npx -y whatsapp-axi chats [--limit <n>] [--fields <list>] [--json-out[=path]]` — Chats with kept content: id, name, type, effective scope
 - `npx -y whatsapp-axi groups [--limit <n>] [--fields <list>] [--json-out[=path]]` — Every group the account is a member of, kept content or not: id, name, effective scope, member count
-- `npx -y whatsapp-axi chat view <chat> [--fields <list>] [--json-out[=path]]` — One chat, with participants marked me, operator, contact
+- `npx -y whatsapp-axi chat view <chat> [--limit <n>] [--fields <list>] [--json-out[=path]]` — One chat, with participants marked me, operator, contact
 - `npx -y whatsapp-axi events [--after <seq>] [--limit <n>] [--chat <chat>] [--kind <kind>] [--follow] [--mark-read] [--fields <list>] [--json-out[=path]]` — Events after a seq; the last line states the highest seq returned, for the next call
 - `npx -y whatsapp-axi read <chat> [--limit <n>] [--before <id>] [--mark-read] [--fields <list>] [--json-out[=path]]` — Kept messages of a chat, oldest first
 - `npx -y whatsapp-axi message view <ref> [--full] [--json-out[=path]]` — One kept message in full, with its reply context and media descriptor
