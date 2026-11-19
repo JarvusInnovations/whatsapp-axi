@@ -98,11 +98,21 @@ describe("send", () => {
     expect(fake.seen.filter((s) => s.path === "/v1/send")).toHaveLength(0);
   });
 
-  it("fails on an answer it cannot read", async () => {
-    fake.route("POST /v1/send", () => ({ body: { ok: 1 } }));
-    const r = await run(["send", GROUP, "x"]);
+  it("is outcome_unknown, never a plain failure, on a success answer it cannot read", async () => {
+    // JSON but not the expected object, or lacking the id or the chat: the send may have gone out.
+    for (const reply of [{ body: { ok: 1 } }, { body: { id: "3EB0X" } }, { raw: "[1,2]" }, { raw: "null" }, { raw: '"sent"' }]) {
+      fake.route("POST /v1/send", () => reply);
+      const r = await run(["send", GROUP, "x", "--id", "3EB0C0FFEE00000000000001"]);
+      expect(r.code, JSON.stringify(reply)).toBe(1);
+      expect(r.out).toContain("code: OUTCOME_UNKNOWN");
+      expect(r.out).toContain(`whatsapp-axi read ${GROUP}`);
+      expect(r.out).toContain("--id 3EB0C0FFEE00000000000001");
+      expect(r.out).not.toContain("UNEXPECTED_RESPONSE");
+    }
+    fake.route("POST /v1/react", () => ({ body: { ok: 1 } }));
+    const r = await run(["react", `${GROUP}/3EB0AAAA0000000001`, "👍"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("code: UNEXPECTED_RESPONSE");
+    expect(r.out).toContain("code: OUTCOME_UNKNOWN");
   });
 });
 

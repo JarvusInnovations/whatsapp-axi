@@ -7,7 +7,7 @@ import { startCommand, type Status } from "../client.js";
 import { confirmRequired, failure, invalid, reasonOf } from "../errors.js";
 import { accountEntries, pinOf, PIN_VAR, readDefault, writeDefault } from "../config.js";
 import { accountExists, accountPaths, legacyAccounts, validAccount, type AccountEntry } from "../paths.js";
-import { account, acctFlag, type Ctx } from "../context.js";
+import { account, acctFlag, envChoices, type Ctx } from "../context.js";
 import { installedAccounts } from "./daemon.js";
 import { line } from "../output/toon.js";
 
@@ -113,6 +113,7 @@ async function homeView(ctx: Ctx): Promise<unknown> {
       accounts: "0 accounts for this user",
       ...(legacy.length ? { old_layout: legacy.join(", ") } : {}),
       ...(pin ? { account_lock: `${pin} (${PIN_VAR}), which does not exist` } : {}),
+      ...envChoices(ctx),
       help: [...help, DISCOVERY],
     };
   }
@@ -126,6 +127,7 @@ async function homeView(ctx: Ctx): Promise<unknown> {
   if (pin !== undefined)
     out.account_lock = names.includes(pin) ? `${pin} (${PIN_VAR})` : `${pin} (${PIN_VAR}), which does not exist: every command fails with ACCOUNT_LOCK_INVALID`;
   out.writes = writesLine(ctx, names);
+  Object.assign(out, envChoices(ctx));
   const rows = await Promise.all(entries.map((e) => accountRow(ctx, e)));
   out.accounts = rows.map((r) => ({ name: r.name, state: r.state, scope: r.scope }));
   if (legacy.length) out.old_layout = legacy.join(", ");
@@ -373,22 +375,34 @@ export async function daemonRun(ctx: Ctx, args: string[]): Promise<string> {
   const level = p.flags["log-level"];
   const bin = findDaemon(ctx.io.env);
   const daemonArgs = ["run", "--account", name, ...(level ? ["--log-level", String(level)] : [])];
-  const code = await new Promise<number>((resolve, reject) => {
+  // Only an interrupt or terminate the CLI itself passed on is a clean stop; a daemon killed by any
+  // other signal did not stop cleanly (specs/conventions.md "Reads fail closed").
+  const { code, signal } = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
     const child = spawn(bin, daemonArgs, { stdio: ["ignore", "inherit", "inherit"], env: ctx.io.env as NodeJS.ProcessEnv });
-    const forward = (sig: NodeJS.Signals) => child.kill(sig);
+    const passed = new Set<NodeJS.Signals>();
+    const forward = (sig: NodeJS.Signals) => {
+      passed.add(sig);
+      child.kill(sig);
+    };
     process.on("SIGINT", forward);
     process.on("SIGTERM", forward);
     child.on("error", (e) =>
       reject(failure(`Cannot run the daemon binary ${bin}: ${e.message}`, "DAEMON_BINARY_FAILED", ["Run `whatsapp-axi doctor` to check the binary"])),
     );
-    child.on("close", (c, signal) => {
+    child.on("close", (c, sig) => {
       process.off("SIGINT", forward);
       process.off("SIGTERM", forward);
-      resolve(c ?? (signal ? 0 : 1));
+      resolve({ code: sig && passed.has(sig) ? 0 : c, signal: sig && passed.has(sig) ? null : sig });
     });
   });
+  if (signal) {
+    throw failure(`The daemon of account ${name} was killed by ${signal}; it did not stop cleanly.`, "DAEMON_EXITED", [
+      `Run \`whatsapp-axi daemon run ${name}\` to start it again`,
+      "Run `whatsapp-axi doctor` to check the account",
+    ]);
+  }
   if (code !== 0) {
-    throw failure(`The daemon of account ${name} exited with status ${code}; its message is above, on standard error.`, "DAEMON_EXITED", [
+    throw failure(`The daemon of account ${name} exited with status ${code ?? "unknown"}; its message is above, on standard error.`, "DAEMON_EXITED", [
       "Run `whatsapp-axi doctor` to check the account",
     ]);
   }

@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -85,7 +86,11 @@ func New(ctx context.Context, o Options) (*Account, error) {
 		settings: o.Settings,
 		buffer:   newRecentBuffer(),
 		notify:   newNotifier(),
-		limits:   newLimiter(),
+		limits:   newLimiter(o.DB),
+	}
+	// The rate counts of the last hour survive a restart (specs/sending.md "Send limits").
+	if err := a.limits.load(ctx, o.Now()); err != nil {
+		return nil, fmt.Errorf("reading recent send times: %w", err)
 	}
 	st, reason := o.Client.State()
 	if err := a.enterState(ctx, st, reason, true); err != nil {

@@ -1,8 +1,9 @@
 // Shared command plumbing: the per-invocation context (accounts, time zone, exit code), the daemon
 // client, and small output helpers.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Daemon, expect } from "./client.js";
-import { SystemdUser, type ServiceManager } from "./service.js";
+import { SystemdUser, TEMPLATE, unitDir, unitName, type ServiceManager } from "./service.js";
 import { accountEntries, resolveAccount, type AccountSource, type Resolved } from "./config.js";
 import { accountPaths, roots, type Env, type Roots } from "./paths.js";
 import { localTime, systemZone } from "./output/time.js";
@@ -77,9 +78,28 @@ export function makeCtx(io: Io): Ctx {
     tz: systemZone(),
     tzUsed: false,
     exitCode: 0,
-    daemon: (a, t) => new Daemon(a, accountPaths(a, r).socket, t ?? readTimeoutMs(io.env), acctFlag(ctx, a), t === undefined),
+    daemon: (a, t) => {
+      const d = new Daemon(a, accountPaths(a, r).socket, t ?? readTimeoutMs(io.env), acctFlag(ctx, a), t === undefined);
+      // Whether the account is installed as a service, for the DAEMON_NOT_RUNNING hint.
+      d.installed = () => existsSync(join(unitDir(r), "default.target.wants", unitName(a))) && existsSync(join(unitDir(r), TEMPLATE));
+      return d;
+    },
   };
   return ctx;
+}
+
+/**
+ * The choices WHATSAPP_AXI_CONFIG_DIR and WHATSAPP_AXI_DAEMON made, echoed in home and doctor
+ * (specs/conventions.md "Environment variables"). Empty when neither is set.
+ */
+export function envChoices(ctx: Ctx): Record<string, string> {
+  const out: Record<string, string> = {};
+  const cfg = ctx.io.env.WHATSAPP_AXI_CONFIG_DIR;
+  if (ctx.roots.configFromEnv) out.config_dir = `${ctx.roots.config} (WHATSAPP_AXI_CONFIG_DIR)`;
+  else if (cfg) out.config_dir = `${ctx.roots.config} (WHATSAPP_AXI_CONFIG_DIR is ignored: ${cfg} is not an absolute path)`;
+  const bin = ctx.io.env.WHATSAPP_AXI_DAEMON;
+  if (bin) out.daemon_binary = `${bin} (WHATSAPP_AXI_DAEMON)`;
+  return out;
 }
 
 /** Resolves the account of the running command, and records it for the `account:` line. */

@@ -898,19 +898,34 @@ func (a *Account) PatchSettings(ctx context.Context, body []byte) (*SettingsResu
 }
 
 // Loosens lists what a change from prev to next widens or loosens, each needing confirm
-// (specs/conventions.md "The gate inventory"): scope full (the account's or a chat's), dm_from
-// anyone, send.first_contact allow, raising a send limit above its current value, raising the
-// effective retain_days or making it unlimited, and adding an operator. Tightening, and
-// setting a value already in place, needs nothing.
+// (specs/conventions.md "The gate inventory"): any chat's effective scope widened (judged by
+// effect, not by the value asked for), dm_from anyone, send.first_contact allow, raising a send
+// limit above its current value, raising the effective retain_days or making it unlimited, and
+// adding an operator. Tightening, and setting a value already in place, needs nothing.
 func Loosens(prev, next settings.Settings) []string {
 	var out []string
-	if next.Scope == settings.ScopeFull && prev.Scope != settings.ScopeFull {
-		out = append(out, "scope full")
+	// The chats without an override follow the account's scope.
+	if scopeRank(next.Scope) > scopeRank(prev.Scope) {
+		out = append(out, "scope "+next.Scope)
+	}
+	// A chat with an override in either version: its own value, or the account's where it has none.
+	ids := map[string]bool{}
+	for id := range prev.Chats {
+		ids[id] = true
+	}
+	for id := range next.Chats {
+		ids[id] = true
 	}
 	var chats []string
-	for id, v := range next.Chats {
-		if v == settings.ScopeFull && prev.Chats[id] != settings.ScopeFull {
-			chats = append(chats, "chats."+id+" full")
+	for id := range ids {
+		p, n := effectiveScope(prev, id), effectiveScope(next, id)
+		if scopeRank(n) <= scopeRank(p) {
+			continue
+		}
+		if _, own := next.Chats[id]; own {
+			chats = append(chats, "chats."+id+" "+n)
+		} else {
+			chats = append(chats, "chats."+id+" default ("+n+")")
 		}
 	}
 	sort.Strings(chats)
@@ -953,6 +968,30 @@ func Loosens(prev, next settings.Settings) []string {
 		}
 	}
 	return out
+}
+
+// effectiveScope is a chat's scope under s: its override, or the account's scope where it has none.
+func effectiveScope(s settings.Settings, chat string) string {
+	if v, ok := s.Chats[chat]; ok {
+		return v
+	}
+	return s.Scope
+}
+
+// scopeRank orders scopes by how much they keep: none < dm-only < tagged < full
+// (specs/conventions.md "Widening is judged by effect").
+func scopeRank(scope string) int {
+	switch scope {
+	case settings.OverrideNone:
+		return 0
+	case settings.ScopeDMOnly:
+		return 1
+	case settings.ScopeTagged:
+		return 2
+	case settings.ScopeFull:
+		return 3
+	}
+	return 3 // an unknown value is treated as the widest, so it is never let through ungated
 }
 
 // writeSettings writes and applies settings. The caller holds a.mu.

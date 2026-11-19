@@ -1,7 +1,9 @@
 package core
 
 import (
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"net/http"
 	"strings"
 	"sync"
@@ -11,10 +13,12 @@ import (
 )
 
 // limiter holds the send limits' memory (specs/sending.md "Send limits"): the times of recent
-// sends and reactions, and a hash of each recent text with the chats it went to. It lives in
-// memory only.
+// sends and reactions, and a hash of each recent text with the chats it went to. The times are
+// also recorded in store.db (send_times) and read back at start, so a restart does not clear the
+// rate counts. The same-text memory lives in memory only, a known limit.
 type limiter struct {
 	mu    sync.Mutex
+	db    *sql.DB
 	sends []time.Time
 	texts map[[32]byte][]textUse
 }
@@ -26,7 +30,34 @@ type textUse struct {
 
 const sameTextWindow = 10 * time.Minute
 
-func newLimiter() *limiter { return &limiter{texts: map[[32]byte][]textUse{}} }
+func newLimiter(db *sql.DB) *limiter { return &limiter{db: db, texts: map[[32]byte][]textUse{}} }
+
+// load reads the send times of the last hour from store.db.
+func (l *limiter) load(ctx context.Context, now time.Time) error {
+	if l.db == nil {
+		return nil
+	}
+	rows, err := l.db.QueryContext(ctx, `SELECT t FROM send_times WHERE t > ? ORDER BY t`, now.Add(-time.Hour).UnixMilli())
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var sends []time.Time
+	for rows.Next() {
+		var ms int64
+		if err := rows.Scan(&ms); err != nil {
+			return err
+		}
+		sends = append(sends, time.UnixMilli(ms).UTC())
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	l.sends = append(sends, l.sends...)
+	return nil
+}
 
 func textHash(text string) [32]byte { return sha256.Sum256([]byte(strings.TrimSpace(text))) }
 
@@ -91,8 +122,9 @@ func (l *limiter) check(now time.Time, lim settings.Send, chat, text string) *AP
 	return nil
 }
 
-// record counts a send that went to the client.
-func (l *limiter) record(now time.Time, chat, text string) {
+// record counts a send that went to the client, in memory and in store.db. The count in memory
+// holds whatever happens to the write; an error means only that a restart would not see it.
+func (l *limiter) record(ctx context.Context, now time.Time, chat, text string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.sends = append(l.sends, now)
@@ -100,4 +132,12 @@ func (l *limiter) record(now time.Time, chat, text string) {
 		h := textHash(text)
 		l.texts[h] = append(l.texts[h], textUse{chat: chat, t: now})
 	}
+	if l.db == nil {
+		return nil
+	}
+	if _, err := l.db.ExecContext(ctx, `INSERT INTO send_times(t) VALUES (?)`, now.UnixMilli()); err != nil {
+		return err
+	}
+	_, err := l.db.ExecContext(ctx, `DELETE FROM send_times WHERE t <= ?`, now.Add(-time.Hour).UnixMilli())
+	return err
 }

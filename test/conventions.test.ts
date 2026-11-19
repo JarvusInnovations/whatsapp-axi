@@ -40,14 +40,28 @@ const DAEMON_BACKED: string[][] = [
 ];
 
 describe("with no daemon running", () => {
-  it("every daemon-backed command names the start command and exits 1", async () => {
+  it("every daemon-backed command names install or run for an account not installed as a service, and exits 1", async () => {
     addAccount(env, "example");
     for (const argv of DAEMON_BACKED) {
       const r = await run(argv);
       expect(r.code, argv.join(" ")).toBe(1);
       expect(r.out, argv.join(" ")).toContain("code: DAEMON_NOT_RUNNING");
-      expect(r.out, argv.join(" ")).toContain("whatsapp-axi daemon start example");
+      expect(r.out, argv.join(" ")).toContain("whatsapp-axi daemon install example");
+      expect(r.out, argv.join(" ")).toContain("whatsapp-axi daemon run example");
+      expect(r.out, argv.join(" ")).not.toContain("daemon start");
     }
+  });
+
+  it("names the start command for an account installed as a service", async () => {
+    addAccount(env, "example");
+    const units = join(env.home, "config", "systemd", "user");
+    mkdirSync(join(units, "default.target.wants"), { recursive: true });
+    writeFileSync(join(units, "whatsapp-axi@.service"), "");
+    writeFileSync(join(units, "default.target.wants", "whatsapp-axi@example.service"), "");
+    const r = await run(["chats"]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("code: DAEMON_NOT_RUNNING");
+    expect(r.out).toContain("whatsapp-axi daemon start example");
   });
 
   it("doctor reports it as a failed check with the start command", async () => {
@@ -393,7 +407,8 @@ describe("output vocabulary", () => {
       });
       r = await run(["update"]);
       expect(r.code).toBe(1);
-      expect(r.out).toContain("code: UPSTREAM_ERROR");
+      expect(r.out).toContain("code: UPDATE_FAILED");
+      expect(r.out).not.toContain("UPSTREAM_ERROR");
       // A failed upgrade comes after the registry named a version, so its npm hint is kept.
       const { AxiError } = await import("axi-sdk-js");
       setUpdater(async () => {

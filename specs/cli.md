@@ -146,6 +146,11 @@ for each failed check that has a command. Per account:
 Every list states its size against the whole: `count: N of M`, and when N is less than M a
 `help` line with the flag that shows more. `chats`, `groups`, `read` and `events` all take
 `--limit` and all say when the limit cut the list. A list is never silently partial.
+`chats` and `groups` show 100 rows unless `--limit` says otherwise. `chat view` shows the first
+100 participants with `participants: N of M`, and takes `--limit` for more.
+
+`DAEMON_NOT_RUNNING` suggests `daemon start <name>` only for an account installed as a service;
+for one that is not, it suggests `daemon install <name>` or `daemon run`, as the home view does.
 
 | Command | Does |
 | --- | --- |

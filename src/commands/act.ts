@@ -116,7 +116,12 @@ export async function send(ctx: Ctx, args: string[]): Promise<unknown> {
 /** A send whose OUTCOME_UNKNOWN names the full retry command with the id. */
 async function sendWithRetry(ctx: Ctx, d: Daemon, path: string, body: Obj, chat: string, id: string | undefined, af: string): Promise<Obj> {
   try {
-    return await d.send(path, body, { chat, id, ...(id ? { retry: retryLine(ctx, id, af) } : {}) });
+    return await d.send(
+      path,
+      body,
+      { chat, id, ...(id ? { retry: retryLine(ctx, id, af) } : {}) },
+      (r) => typeof r.id === "string" && typeof r.chat === "string",
+    );
   } catch (err) {
     const e = err as { code?: string; details?: Obj; suggestions?: string[] };
     const known = typeof e.details?.id === "string" ? (e.details.id as string) : undefined;
@@ -201,7 +206,7 @@ export async function react(ctx: Ctx, args: string[]): Promise<unknown> {
   const af = acctFlag(ctx, name);
   const body: Obj = { id, emoji: remove ? "" : emojiArg };
   if (chat) body.chat = chat;
-  const res = await d.send("/v1/react", body, { chat: chat || undefined });
+  const res = await d.send("/v1/react", body, { chat: chat || undefined }, (r) => typeof r.changed === "boolean" && typeof r.chat === "string");
   expect(d, typeof res.changed === "boolean" && typeof res.chat === "string", "react answer is missing fields");
   const target = `${res.chat as string}/${id}`;
   const warning = typeof res.warning === "string" && res.warning ? { warning: res.warning } : {};

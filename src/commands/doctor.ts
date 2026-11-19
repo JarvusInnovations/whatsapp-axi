@@ -14,7 +14,7 @@ import { VERSION } from "../version.js";
 import { binaryVersion, isInstalled } from "./daemon.js";
 import { hookDir, hookStatus } from "./setup.js";
 import { installedBinary, unitName } from "../service.js";
-import { time, type Ctx } from "../context.js";
+import { envChoices, time, type Ctx } from "../context.js";
 
 type Status3 = "ok" | "fail" | "skipped";
 
@@ -335,6 +335,7 @@ export async function doctor(ctx: Ctx, args: string[]): Promise<unknown> {
   }
   const pin = pinOf(ctx.io.env);
   if (pin !== undefined) out.account_lock = `${pin} (${PIN_VAR}); doctor checks every account regardless`;
+  Object.assign(out, envChoices(ctx));
   try {
     const def = readDefault(ctx.roots);
     if (def !== undefined && !entries.some((e) => e.name === def))

@@ -58,7 +58,11 @@ describe.skipIf(!ready)("end to end with the real daemon", () => {
     expect(r.out).toContain("scope: dm-only");
     r = await run(["scope", "set", "dm-only"]);
     expect(r.out).toContain("no-op");
+    // Under dm-only, a chat raised to tagged widens it: the daemon and the CLI both gate it.
     r = await run(["scope", "set", "--chat", "120363000000000001@g.us", "tagged"]);
+    expect(r.code, r.out).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
+    r = await run(["scope", "set", "--chat", "120363000000000001@g.us", "tagged", "--confirm"]);
     expect(r.code, r.out).toBe(0);
 
     r = await run(["operators", "add", "+15550100001"]);
@@ -118,7 +122,10 @@ describe.skipIf(!ready)("end to end with the real daemon", () => {
     // Settings survived the restart-free stop, and the daemon being down is reported as such.
     r = await run(["scope", "show"]);
     expect(r.code).toBe(1);
-    expect(r.out).toContain("whatsapp-axi daemon start demo");
+    expect(r.out).toContain("code: DAEMON_NOT_RUNNING");
+    // Not installed as a service: the hint is install or run, never start.
+    expect(r.out).toContain("whatsapp-axi daemon install demo");
+    expect(r.out).not.toContain("daemon start demo");
 
     r = await run(["account", "remove", "demo", "--confirm", "demo"]);
     expect(r.code, r.out).toBe(0);

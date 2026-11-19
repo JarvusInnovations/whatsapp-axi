@@ -332,6 +332,22 @@ describe("events", () => {
     expect(lines[1]).toContain("412,message");
     expect(result.last_seq).toBe(413);
   });
+  it("a follow that loses the daemon ends STREAM_CLOSED with the last seq and the resume command", async () => {
+    fake.route("GET /v1/events", () => ({ lines: events.slice(0, 2), dropAfter: true }));
+    const r = await run(["events", "--after", "410", "--follow", "--kind", "message"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("code: STREAM_CLOSED");
+    expect(r.out).not.toContain("INTERNAL_ERROR");
+    expect(r.out).toContain("lost mid-stream");
+    expect(r.out).toContain("last_seq: 412");
+    expect(r.out).toContain("whatsapp-axi events --after 412 --follow --kind message` to resume");
+    // A daemon that closes the stream cleanly is STREAM_CLOSED too, with the same cursor.
+    fake.route("GET /v1/events", () => ({ lines: events.slice(0, 2), end: true }));
+    const r2 = await run(["events", "--after", "410", "--follow"]);
+    expect(r2.code, r2.out).toBe(1);
+    expect(r2.out).toContain("code: STREAM_CLOSED");
+    expect(r2.out).toContain("last_seq: 412");
+  });
 });
 
 describe("bounded lists", () => {
@@ -360,6 +376,44 @@ describe("bounded lists", () => {
     expect(r.out).toContain("count: 1 of 1");
     expect(r.out).not.toContain("limit cut");
     expect((await run(["chats", "--limit", "0"])).code).toBe(2);
+  });
+
+  it("chats, groups and chat view participants stop at 100 by default, with N of M and a hint", async () => {
+    const rows = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `1203630000000${String(i).padStart(5, "0")}@g.us`,
+        name: `g${i}`,
+        type: "group",
+        scope: "tagged",
+        members: 3,
+      }));
+    fake.route("GET /v1/chats", ({ query }) => {
+      expect(query.get("limit")).toBe("100");
+      return { body: { chats: rows(100), total: 250 } };
+    });
+    let r = await run(["chats"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("count: 100 of 250");
+    expect(r.out).toContain("whatsapp-axi chats --limit 250");
+    fake.route("GET /v1/groups", ({ query }) => {
+      expect(query.get("limit")).toBe("100");
+      return { body: { groups: rows(100), total: 130 } };
+    });
+    r = await run(["groups"]);
+    expect(r.out).toContain("count: 100 of 130");
+    expect(r.out).toContain("whatsapp-axi groups --limit 130");
+    const people = Array.from({ length: 150 }, (_, i) => ({ id: `${100000000001000 + i}@lid`, name: `p${i}`, me: false, operator: false, contact: false }));
+    fake.route("GET /v1/chats/*", () => ({ body: { chat: { id: GROUP, name: "Big group", type: "group", scope: "tagged", participants: people } } }));
+    r = await run(["chat", "view", GROUP]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("participants: 100 of 150");
+    expect(r.out).toContain("participants[100]{id,name,marks}:");
+    expect(r.out).toContain(`whatsapp-axi chat view ${GROUP} --limit 150`);
+    r = await run(["chat", "view", GROUP, "--limit", "150"]);
+    expect(r.out).toContain("participants: 150 of 150");
+    expect(r.out).toContain("participants[150]{id,name,marks}:");
+    expect(r.out).not.toContain("--limit 150`");
+    expect((await run(["chat", "view", GROUP, "--limit", "0"])).code).toBe(2);
   });
 });
 
@@ -546,14 +600,68 @@ describe("scope, operators and settings", () => {
     expect(r.out).toContain("action: set");
     expect(r.out).toContain("scope: none");
     expect(r.out).toContain("note: was default");
-    expect(r.out).toContain(`whatsapp-axi scope set default --chat ${GROUP}`);
+    expect(r.out).toContain(`whatsapp-axi scope set default --chat ${GROUP} --confirm\` to undo`);
     expect(fake.seen.at(-1)?.body).toEqual({ chats: { [GROUP]: "none" } });
-    r = await run(["scope", "set", "--chat", GROUP, "default"]);
-    expect(fake.seen.at(-1)?.body).toEqual({ chats: { [GROUP]: null } });
+    // Clearing none under tagged widens the chat back, so it is gated.
+    r = await run(["scope", "set", "--chat", GROUP, "default", "--confirm"]);
+    expect(fake.seen.at(-1)?.body).toEqual({ chats: { [GROUP]: null }, confirm: true });
     expect(r.out).toContain("scope: default");
     expect(r.out).toContain("note: was none");
     r = await run(["scope", "set", "--chat", GROUP, "dm-only"]);
     expect(r.code).toBe(2);
+  });
+
+  it("gates any change that widens a chat's effective scope, judged by effect", async () => {
+    const patches = () => fake.seen.filter((x) => x.method === "PATCH").length;
+    // The account's scope raised one step, dm-only to tagged.
+    fake.settings.scope = "dm-only";
+    let n = patches();
+    let r = await run(["scope", "set", "tagged"]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
+    expect(r.out).toContain("whatsapp-axi scope set tagged --confirm");
+    expect(patches()).toBe(n);
+    // A chat override raised from none to tagged.
+    fake.settings.scope = "tagged";
+    fake.settings.chats = { [GROUP]: "none" } as never;
+    r = await run(["scope", "set", "tagged", "--chat", GROUP]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
+    expect(r.out).toContain(`whatsapp-axi scope set tagged --chat ${GROUP} --confirm`);
+    // An override of none removed under account scope full.
+    fake.settings.scope = "full";
+    r = await run(["scope", "set", "default", "--chat", GROUP]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
+    expect(patches()).toBe(n);
+    r = await run(["scope", "set", "default", "--chat", GROUP, "--confirm"]);
+    expect(r.code, r.out).toBe(0);
+    expect(fake.seen.at(-1)?.body).toEqual({ chats: { [GROUP]: null }, confirm: true });
+    // Setting none under full is a tightening; its undo widens, so the hint carries --confirm.
+    r = await run(["scope", "set", "none", "--chat", GROUP]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain(`whatsapp-axi scope set default --chat ${GROUP} --confirm\` to undo`);
+    // Lowering the account scope: no gate; the undo carries --confirm.
+    r = await run(["scope", "set", "dm-only"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("whatsapp-axi scope set full --confirm` to undo");
+    // Removing an override that narrows, and a tightening, need nothing.
+    fake.settings.scope = "tagged";
+    fake.settings.chats = { [GROUP]: "full" } as never;
+    n = patches();
+    r = await run(["scope", "set", "default", "--chat", GROUP]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain(`whatsapp-axi scope set full --chat ${GROUP} --confirm\` to undo`);
+    r = await run(["scope", "set", "none", "--chat", GROUP]);
+    expect(r.code, r.out).toBe(0);
+    expect(patches()).toBe(n + 2);
+    // The daemon's own refusal (a chat named another way) names the same command.
+    fake.route("PATCH /v1/settings", () =>
+      apiError(409, "CONFIRM_REQUIRED", "This change widens what the account reads (chats.x tagged); send it with confirm: true."),
+    );
+    r = await run(["scope", "set", "tagged", "--chat", "+15550100001"]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("whatsapp-axi scope set tagged --chat +15550100001 --confirm");
   });
 
   it("sets dm-from; anyone needs --confirm, operators does not", async () => {
@@ -833,12 +941,23 @@ describe("account add, account remove and daemon run", () => {
     r = await run(["daemon", "run", "example"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("code: DAEMON_EXITED");
+    // A daemon killed by a signal the CLI did not pass on did not stop cleanly.
+    fakeBinary(`kill -KILL $$`);
+    r = await run(["daemon", "run", "example"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("code: DAEMON_EXITED");
+    expect(r.out).toContain("SIGKILL");
+    expect(r.out).not.toContain("action: stopped");
+    fakeBinary(`kill -TERM $$`);
+    r = await run(["daemon", "run", "example"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("SIGTERM");
     r = await run(["daemon", "run", "nobody"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("NO_ACCOUNT");
     r = await run(["daemon", "run", "example", "--log-level", "loud"]);
     expect(r.code).toBe(2);
-  });
+  }, 60_000);
 
   it("names the missing platform package when no binary is found", async () => {
     process.env.WHATSAPP_AXI_DAEMON = join(env.home, "missing");

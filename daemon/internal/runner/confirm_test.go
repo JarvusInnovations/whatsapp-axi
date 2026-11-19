@@ -64,3 +64,46 @@ func TestConfirmRequiredAtTheSocket(t *testing.T) {
 	}
 	d.wantError("PATCH", "/v1/settings", `{"confirm":"yes"}`, 400, "VALIDATION_ERROR")
 }
+
+// TestWideningJudgedByEffect: a scope change is gated when any chat's effective scope widens,
+// whatever value was asked for; removing an override that narrows, and any tightening, is not
+// (specs/conventions.md "Widening is judged by effect, not by the value asked for").
+func TestWideningJudgedByEffect(t *testing.T) {
+	e := newEnv(t)
+	e.init()
+	d := e.start(startOpts{})
+	gated := func(body, want string) {
+		t.Helper()
+		e := d.wantError("PATCH", "/v1/settings", body, 409, "CONFIRM_REQUIRED")
+		if !strings.Contains(e["message"].(string), want) {
+			t.Fatalf("%s: %v", body, e)
+		}
+		d.patch(strings.TrimSuffix(body, "}") + `,"confirm":true}`)
+	}
+	// The account's scope raised one step: dm-only to tagged.
+	d.patch(`{"scope":"dm-only"}`)
+	gated(`{"scope":"tagged"}`, "scope tagged")
+	// A chat's override raised from none to tagged.
+	d.patch(`{"chats":{"` + group + `":"none"}}`)
+	gated(`{"chats":{"`+group+`":"tagged"}}`, "chats."+group+" tagged")
+	// An override of none removed under account scope full.
+	gated(`{"scope":"full"}`, "scope full")
+	d.patch(`{"chats":{"` + group + `":"none"}}`)
+	gated(`{"chats":{"`+group+`":null}}`, "chats."+group+" default (full)")
+	// Removing an override that narrows, and every tightening, needs nothing.
+	d.patch(`{"scope":"tagged"}`)
+	gated(`{"chats":{"`+group+`":"full"}}`, "chats."+group+" full")
+	for _, body := range []string{
+		`{"chats":{"` + group + `":null}}`,
+		`{"chats":{"` + group + `":"tagged"}}`,
+		`{"chats":{"` + group + `":"none"}}`,
+		`{"scope":"dm-only"}`,
+	} {
+		d.patch(body)
+	}
+	// Removing none under dm-only still widens that chat (none to dm-only), so it is gated.
+	gated(`{"chats":{"`+group+`":null}}`, "default (dm-only)")
+	// Raising a chat above the account's scope is gated; lowering it back is not.
+	gated(`{"chats":{"`+group+`":"tagged"}}`, "chats."+group+" tagged")
+	d.patch(`{"chats":{"` + group + `":null}}`)
+}

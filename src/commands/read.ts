@@ -3,7 +3,7 @@
 // printed whole (specs/conventions.md "Message and chat ids").
 import { parse, parseFields, contradiction, type CommandSpec } from "../flags.js";
 import { expect, type Daemon } from "../client.js";
-import { confirmRequired, invalid, usage } from "../errors.js";
+import { ToolError, confirmRequired, invalid, usage } from "../errors.js";
 import { account, acctFlag, asMarkOutcome, cell, countOf, longText, markError, pick, plural, time, type Ctx, type MarkOutcome } from "../context.js";
 import { line } from "../output/toon.js";
 
@@ -52,6 +52,9 @@ function checkLimit(v: unknown, max: number): number | undefined {
   return n;
 }
 
+/** The rows `chats`, `groups` and `chat view` participants show unless --limit says otherwise (specs/cli.md). */
+const LIST_DEFAULT = 100;
+
 // ---- chats -----------------------------------------------------------------
 
 export const chatsSpec: CommandSpec = {
@@ -59,7 +62,7 @@ export const chatsSpec: CommandSpec = {
   summary: "Chats with kept content: id, name, type, effective scope",
   positionals: [],
   flags: {
-    limit: limitFlag(10000, "default: all"),
+    limit: limitFlag(10000, "default 100"),
     fields: { type: "string", value: "<list>", desc: "add columns: last_kept, discarded, messages, override" },
   },
   examples: ["whatsapp-axi chats", "whatsapp-axi chats --limit 10 --fields last_kept,discarded"],
@@ -69,7 +72,7 @@ export const chatsSpec: CommandSpec = {
 export async function chats(ctx: Ctx, args: string[]): Promise<unknown> {
   const p = parse(chatsSpec, args);
   const fields = parseFields(chatsSpec, p.flags.fields, ["last_kept", "discarded", "messages", "override"]);
-  const limit = checkLimit(p.flags.limit, 10000);
+  const limit = checkLimit(p.flags.limit, 10000) ?? LIST_DEFAULT;
   const name = account(ctx);
   const d = ctx.daemon(name);
   const res = await d.call("GET", `/v1/chats${q({ limit })}`);
@@ -91,7 +94,7 @@ export const groupsSpec: CommandSpec = {
   name: "groups",
   summary: "Every group the account is a member of, kept content or not: id, name, effective scope, member count",
   positionals: [],
-  flags: { limit: limitFlag(10000, "default: all"), fields: { type: "string", value: "<list>", desc: "add columns: discarded, override" } },
+  flags: { limit: limitFlag(10000, "default 100"), fields: { type: "string", value: "<list>", desc: "add columns: discarded, override" } },
   examples: ["whatsapp-axi groups", "whatsapp-axi groups --limit 20 --fields discarded"],
   jsonOut: true,
 };
@@ -99,7 +102,7 @@ export const groupsSpec: CommandSpec = {
 export async function groups(ctx: Ctx, args: string[]): Promise<unknown> {
   const p = parse(groupsSpec, args);
   const fields = parseFields(groupsSpec, p.flags.fields, ["discarded", "override"]);
-  const limit = checkLimit(p.flags.limit, 10000);
+  const limit = checkLimit(p.flags.limit, 10000) ?? LIST_DEFAULT;
   const name = account(ctx);
   const d = ctx.daemon(name);
   const res = await d.call("GET", `/v1/groups${q({ limit })}`);
@@ -122,19 +125,29 @@ export const chatViewSpec: CommandSpec = {
   name: "chat view",
   summary: "One chat, with participants marked me, operator, contact",
   positionals: [{ name: "chat", required: true, desc: "group id, hidden id, phone-number id or +phone" }],
-  flags: { fields: { type: "string", value: "<list>", desc: "add participant columns: lid, pn" } },
-  examples: ["whatsapp-axi chat view 120363000000000001@g.us", "whatsapp-axi chat view +15550100001"],
+  flags: {
+    limit: { type: "int", value: "<n>", desc: "at most this many participants (default 100, max 10000)" },
+    fields: { type: "string", value: "<list>", desc: "add participant columns: lid, pn" },
+  },
+  examples: [
+    "whatsapp-axi chat view 120363000000000001@g.us",
+    "whatsapp-axi chat view +15550100001",
+    "whatsapp-axi chat view 120363000000000001@g.us --limit 500",
+  ],
   jsonOut: true,
 };
 
 export async function chatView(ctx: Ctx, args: string[]): Promise<unknown> {
   const p = parse(chatViewSpec, args);
   const fields = parseFields(chatViewSpec, p.flags.fields, ["lid", "pn"]);
-  const d = ctx.daemon(account(ctx));
+  const limit = checkLimit(p.flags.limit, 10000) ?? LIST_DEFAULT;
+  const name = account(ctx);
+  const d = ctx.daemon(name);
   const res = await d.call("GET", `/v1/chats/${enc(p.pos[0])}`);
   const c = res.chat as Obj | undefined;
   expect(d, c && typeof c.id === "string" && Array.isArray(c.participants), "chat is missing fields");
-  const parts = (c.participants as Obj[]).map((u) => {
+  const all = c.participants as Obj[];
+  const parts = all.slice(0, limit).map((u) => {
     const marks = [u.me ? "me" : "", u.operator ? "operator" : "", u.contact ? "contact" : ""].filter(Boolean).join(" ") || "-";
     return { id: u.id, name: u.name || null, marks, lid: u.lid ?? null, pn: u.pn ?? null };
   });
@@ -149,8 +162,12 @@ export async function chatView(ctx: Ctx, args: string[]): Promise<unknown> {
       messages: c.messages,
       discarded: c.discarded,
       ...(Array.isArray(c.aliases) && c.aliases.length ? { aliases: c.aliases } : {}),
+      ...(all.length ? { participants: `${parts.length} of ${all.length}` } : {}),
     },
     participants: parts.length ? pick(parts, ["id", "name", "marks", ...fields]) : "0 participants known",
+    ...(parts.length < all.length
+      ? { help: [`Run \`whatsapp-axi chat view ${c.id as string} --limit ${all.length}${acctFlag(ctx, name)}\` to see all ${all.length} participants`] }
+      : {}),
   };
 }
 
@@ -234,26 +251,39 @@ export async function events(ctx: Ctx, args: string[], write: (s: string) => voi
     let last = after;
     let unmarked = 0;
     let reason: string | undefined;
-    for await (const e of d.stream(`/v1/events${q({ ...query, follow: 1 })}`, signal)) {
-      if (e.error && typeof e.error === "object") {
-        // A mark that failed: said on the stream in the error shape, and the stream goes on.
-        const err = e.error as Obj;
-        const m = asMarkOutcome(d, err);
-        unmarked += m.failed;
-        reason = m.reason ?? reason;
-        write(
-          line({
-            error: typeof err.message === "string" ? err.message : `${m.failed} not marked read`,
-            code: "MARK_FAILED",
-            failed: m.failed,
-            ...(m.reason ? { reason: m.reason } : {}),
-          }),
-        );
-        continue;
+    try {
+      for await (const e of d.stream(`/v1/events${q({ ...query, follow: 1 })}`, signal)) {
+        if (e.error && typeof e.error === "object") {
+          // A mark that failed: said on the stream in the error shape, and the stream goes on.
+          const err = e.error as Obj;
+          const m = asMarkOutcome(d, err);
+          unmarked += m.failed;
+          reason = m.reason ?? reason;
+          write(
+            line({
+              error: typeof err.message === "string" ? err.message : `${m.failed} not marked read`,
+              code: "MARK_FAILED",
+              failed: m.failed,
+              ...(m.reason ? { reason: m.reason } : {}),
+            }),
+          );
+          continue;
+        }
+        expect(d, typeof e.seq === "number" && typeof e.kind === "string", "event is missing fields");
+        write(line({ events: pick([eventRow(ctx, e, fields.includes("t"))], keys) }));
+        last = e.seq as number;
       }
-      expect(d, typeof e.seq === "number" && typeof e.kind === "string", "event is missing fields");
-      write(line({ events: pick([eventRow(ctx, e, fields.includes("t"))], keys) }));
-      last = e.seq as number;
+    } catch (err) {
+      // A follow that loses the daemon says the last seq it delivered and how to resume from it.
+      const e = err as ToolError;
+      if (e instanceof ToolError && ["STREAM_CLOSED", "DAEMON_UNREACHABLE", "DAEMON_NOT_RUNNING"].includes(e.code)) {
+        if (last !== undefined) e.before = { ...e.before, last_seq: last };
+        const markFlag = p.flags["mark-read"] ? " --mark-read" : "";
+        e.suggestions.unshift(
+          `Run \`whatsapp-axi events${last !== undefined ? ` --after ${last}` : ""} --follow${markFlag}${filters}${af}\` to resume once the daemon is back`,
+        );
+      }
+      throw err;
     }
     const out: Obj = {};
     if (last !== undefined) out.last_seq = last;
