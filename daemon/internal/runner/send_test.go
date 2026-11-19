@@ -785,3 +785,41 @@ func TestEventsSince(t *testing.T) {
 	}
 	d.wantError("GET", "/v1/events?since=yesterday", nil, 400, "VALIDATION_ERROR")
 }
+
+// TestRateLimitsSurviveARestart: the hour and minute counts come from recorded send times, so a
+// restart inside the window does not clear them (specs/sending.md "Send limits").
+func TestRateLimitsSurviveARestart(t *testing.T) {
+	e := newEnv(t)
+	e.init()
+	clk := &clock{t: time.Date(2030, 1, 5, 14, 0, 0, 0, time.UTC)}
+	d := e.start(startOpts{clock: clk})
+	d.patch(`{"send":{"per_minute":2,"per_hour":3,"first_contact":"allow"},"confirm":true}`)
+	d.send(map[string]any{"chat": "+15550100001", "text": "one"})
+	d.send(map[string]any{"chat": "+15550100002", "text": "two"})
+	d.wantError("POST", "/v1/send", map[string]any{"chat": "+15550100002", "text": "three"}, 429, "RATE_LIMITED")
+	d.stop()
+
+	// Restarted inside the minute: still refused, nothing sent.
+	d = e.start(startOpts{clock: clk})
+	e2 := d.wantError("POST", "/v1/send", map[string]any{"chat": "+15550100002", "text": "three"}, 429, "RATE_LIMITED")
+	if !strings.Contains(fmt.Sprint(e2["message"]), "per minute") {
+		t.Fatalf("%+v", e2)
+	}
+	if d.fake.AttemptCount() != 0 {
+		t.Fatal("sent after the restart")
+	}
+	// The minute passes: one more fits the hour; then the hour is full, across the restart.
+	clk.Add(61 * time.Second)
+	d.send(map[string]any{"chat": "+15550100002", "text": "three"})
+	clk.Add(61 * time.Second)
+	d.stop()
+	d = e.start(startOpts{clock: clk})
+	e3 := d.wantError("POST", "/v1/send", map[string]any{"chat": "+15550100002", "text": "four"}, 429, "RATE_LIMITED")
+	if !strings.Contains(fmt.Sprint(e3["message"]), "per hour") {
+		t.Fatalf("%+v", e3)
+	}
+	// Past the hour the old times no longer count.
+	clk.Add(time.Hour)
+	d.send(map[string]any{"chat": "+15550100003", "text": "five"})
+	d.send(map[string]any{"chat": "+15550100003", "text": "six"})
+}

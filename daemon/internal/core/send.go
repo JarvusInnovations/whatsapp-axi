@@ -473,7 +473,9 @@ func (a *Account) dispatch(ctx context.Context, o *outgoing) (*SentMessage, erro
 	if err != nil {
 		return nil, err
 	}
-	a.limits.record(now, o.t.chat, o.limitTxt)
+	if err := a.limits.record(context.WithoutCancel(ctx), now, o.t.chat, o.limitTxt); err != nil {
+		a.log.Warn("recording a send time failed; a restart would not count it", "err", err)
+	}
 
 	// From here the daemon finishes the send whatever happens to the request: a client that
 	// disconnects or gives up does not cancel it. Only the daemon's own send timeout bounds it.
@@ -627,7 +629,9 @@ func (a *Account) React(ctx context.Context, b ReactBody) (*ReactResult, error) 
 	if fromMe {
 		sender = ""
 	}
-	a.limits.record(now, chat, "")
+	if err := a.limits.record(context.WithoutCancel(ctx), now, chat, ""); err != nil {
+		a.log.Warn("recording a send time failed; a restart would not count it", "err", err)
+	}
 	// As for a send: once it is going out, the request no longer controls it.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SendTimeout)
 	defer cancel()
