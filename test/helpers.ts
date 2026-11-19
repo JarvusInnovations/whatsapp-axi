@@ -208,6 +208,8 @@ export interface Reply {
   lines?: unknown[];
   /** For streams: end the response after the lines (a stream with a final line). */
   end?: boolean;
+  /** For streams: drop the connection after the lines (a daemon that went away mid-stream). */
+  dropAfter?: boolean;
   /** Never answer (a daemon that hangs). */
   hang?: boolean;
   /** Drop the connection without answering. */
@@ -318,6 +320,7 @@ export class FakeDaemon {
         res.writeHead(200, { "Content-Type": "application/x-ndjson" });
         for (const l of reply.lines) res.write(JSON.stringify(l) + "\n");
         if (reply.end) res.end();
+        if (reply.dropAfter) setTimeout(() => req.socket.destroy(), 50);
         return;
       }
       let b = reply.body ?? {};

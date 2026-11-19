@@ -3,7 +3,7 @@
 // printed whole (specs/conventions.md "Message and chat ids").
 import { parse, parseFields, contradiction, type CommandSpec } from "../flags.js";
 import { expect, type Daemon } from "../client.js";
-import { confirmRequired, invalid, usage } from "../errors.js";
+import { ToolError, confirmRequired, invalid, usage } from "../errors.js";
 import { account, acctFlag, asMarkOutcome, cell, countOf, longText, markError, pick, plural, time, type Ctx, type MarkOutcome } from "../context.js";
 import { line } from "../output/toon.js";
 
@@ -234,26 +234,39 @@ export async function events(ctx: Ctx, args: string[], write: (s: string) => voi
     let last = after;
     let unmarked = 0;
     let reason: string | undefined;
-    for await (const e of d.stream(`/v1/events${q({ ...query, follow: 1 })}`, signal)) {
-      if (e.error && typeof e.error === "object") {
-        // A mark that failed: said on the stream in the error shape, and the stream goes on.
-        const err = e.error as Obj;
-        const m = asMarkOutcome(d, err);
-        unmarked += m.failed;
-        reason = m.reason ?? reason;
-        write(
-          line({
-            error: typeof err.message === "string" ? err.message : `${m.failed} not marked read`,
-            code: "MARK_FAILED",
-            failed: m.failed,
-            ...(m.reason ? { reason: m.reason } : {}),
-          }),
-        );
-        continue;
+    try {
+      for await (const e of d.stream(`/v1/events${q({ ...query, follow: 1 })}`, signal)) {
+        if (e.error && typeof e.error === "object") {
+          // A mark that failed: said on the stream in the error shape, and the stream goes on.
+          const err = e.error as Obj;
+          const m = asMarkOutcome(d, err);
+          unmarked += m.failed;
+          reason = m.reason ?? reason;
+          write(
+            line({
+              error: typeof err.message === "string" ? err.message : `${m.failed} not marked read`,
+              code: "MARK_FAILED",
+              failed: m.failed,
+              ...(m.reason ? { reason: m.reason } : {}),
+            }),
+          );
+          continue;
+        }
+        expect(d, typeof e.seq === "number" && typeof e.kind === "string", "event is missing fields");
+        write(line({ events: pick([eventRow(ctx, e, fields.includes("t"))], keys) }));
+        last = e.seq as number;
       }
-      expect(d, typeof e.seq === "number" && typeof e.kind === "string", "event is missing fields");
-      write(line({ events: pick([eventRow(ctx, e, fields.includes("t"))], keys) }));
-      last = e.seq as number;
+    } catch (err) {
+      // A follow that loses the daemon says the last seq it delivered and how to resume from it.
+      const e = err as ToolError;
+      if (e instanceof ToolError && ["STREAM_CLOSED", "DAEMON_UNREACHABLE", "DAEMON_NOT_RUNNING"].includes(e.code)) {
+        if (last !== undefined) e.before = { ...e.before, last_seq: last };
+        const markFlag = p.flags["mark-read"] ? " --mark-read" : "";
+        e.suggestions.unshift(
+          `Run \`whatsapp-axi events${last !== undefined ? ` --after ${last}` : ""} --follow${markFlag}${filters}${af}\` to resume once the daemon is back`,
+        );
+      }
+      throw err;
     }
     const out: Obj = {};
     if (last !== undefined) out.last_seq = last;

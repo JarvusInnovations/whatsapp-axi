@@ -172,7 +172,9 @@ export class Daemon {
               return;
             }
             if (typeof json !== "object" || json === null || Array.isArray(json)) {
-              reject(send && res.statusCode === 200 ? this.outcomeUnknown(send, "the answer was not the expected object") : this.badResponse("not a JSON object"));
+              reject(
+                send && res.statusCode === 200 ? this.outcomeUnknown(send, "the answer was not the expected object") : this.badResponse("not a JSON object"),
+              );
               return;
             }
             resolve({ status: res.statusCode ?? 0, json: json as Json });
@@ -330,7 +332,11 @@ export class Daemon {
       }
     } catch (err) {
       if ((err as Error).name === "AbortError" || signal?.aborted) return;
-      throw err;
+      if (err instanceof ToolError) throw err;
+      // The connection dropped mid-stream (the daemon went away): never an internal error
+      // (specs/conventions.md "Streams").
+      const code = (err as NodeJS.ErrnoException).code ?? (err as Error).message;
+      throw failure(`The connection to the daemon of account ${this.account} was lost mid-stream (${code}).`, "STREAM_CLOSED", [this.doctor()]);
     }
     if (buf.trim() && !signal?.aborted) throw this.badResponse("a stream line is not JSON");
     if (!signal?.aborted && !opts.endOk) {

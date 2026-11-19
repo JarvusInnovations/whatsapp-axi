@@ -332,6 +332,22 @@ describe("events", () => {
     expect(lines[1]).toContain("412,message");
     expect(result.last_seq).toBe(413);
   });
+  it("a follow that loses the daemon ends STREAM_CLOSED with the last seq and the resume command", async () => {
+    fake.route("GET /v1/events", () => ({ lines: events.slice(0, 2), dropAfter: true }));
+    const r = await run(["events", "--after", "410", "--follow", "--kind", "message"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("code: STREAM_CLOSED");
+    expect(r.out).not.toContain("INTERNAL_ERROR");
+    expect(r.out).toContain("lost mid-stream");
+    expect(r.out).toContain("last_seq: 412");
+    expect(r.out).toContain("whatsapp-axi events --after 412 --follow --kind message` to resume");
+    // A daemon that closes the stream cleanly is STREAM_CLOSED too, with the same cursor.
+    fake.route("GET /v1/events", () => ({ lines: events.slice(0, 2), end: true }));
+    const r2 = await run(["events", "--after", "410", "--follow"]);
+    expect(r2.code, r2.out).toBe(1);
+    expect(r2.out).toContain("code: STREAM_CLOSED");
+    expect(r2.out).toContain("last_seq: 412");
+  });
 });
 
 describe("bounded lists", () => {
