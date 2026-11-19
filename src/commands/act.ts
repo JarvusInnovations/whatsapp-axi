@@ -116,7 +116,12 @@ export async function send(ctx: Ctx, args: string[]): Promise<unknown> {
 /** A send whose OUTCOME_UNKNOWN names the full retry command with the id. */
 async function sendWithRetry(ctx: Ctx, d: Daemon, path: string, body: Obj, chat: string, id: string | undefined, af: string): Promise<Obj> {
   try {
-    return await d.send(path, body, { chat, id, ...(id ? { retry: retryLine(ctx, id, af) } : {}) }, (r) => typeof r.id === "string" && typeof r.chat === "string");
+    return await d.send(
+      path,
+      body,
+      { chat, id, ...(id ? { retry: retryLine(ctx, id, af) } : {}) },
+      (r) => typeof r.id === "string" && typeof r.chat === "string",
+    );
   } catch (err) {
     const e = err as { code?: string; details?: Obj; suggestions?: string[] };
     const known = typeof e.details?.id === "string" ? (e.details.id as string) : undefined;

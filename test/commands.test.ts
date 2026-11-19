@@ -602,7 +602,9 @@ describe("scope, operators and settings", () => {
     expect(r.code, r.out).toBe(0);
     expect(patches()).toBe(n + 2);
     // The daemon's own refusal (a chat named another way) names the same command.
-    fake.route("PATCH /v1/settings", () => apiError(409, "CONFIRM_REQUIRED", "This change widens what the account reads (chats.x tagged); send it with confirm: true."));
+    fake.route("PATCH /v1/settings", () =>
+      apiError(409, "CONFIRM_REQUIRED", "This change widens what the account reads (chats.x tagged); send it with confirm: true."),
+    );
     r = await run(["scope", "set", "tagged", "--chat", "+15550100001"]);
     expect(r.code).toBe(2);
     expect(r.out).toContain("whatsapp-axi scope set tagged --chat +15550100001 --confirm");

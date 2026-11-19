@@ -337,7 +337,8 @@ describe("daemon logs", () => {
     service.logResult = {
       code: 0,
       stdout: "",
-      stderr: "Hint: You are currently not seeing messages from other users and the system.\n      Users in groups 'adm' can see all messages.\n      Pass -q to turn off this notice.\n",
+      stderr:
+        "Hint: You are currently not seeing messages from other users and the system.\n      Users in groups 'adm' can see all messages.\n      Pass -q to turn off this notice.\n",
     };
     r = await run(["daemon", "logs", "example"]);
     expect(r.code, r.out).toBe(0);
