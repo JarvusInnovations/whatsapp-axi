@@ -885,6 +885,17 @@ describe("account add, account remove and daemon run", () => {
     r = await run(["daemon", "run", "example"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("code: DAEMON_EXITED");
+    // A daemon killed by a signal the CLI did not pass on did not stop cleanly.
+    fakeBinary(`kill -KILL $$`);
+    r = await run(["daemon", "run", "example"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("code: DAEMON_EXITED");
+    expect(r.out).toContain("SIGKILL");
+    expect(r.out).not.toContain("action: stopped");
+    fakeBinary(`kill -TERM $$`);
+    r = await run(["daemon", "run", "example"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("SIGTERM");
     r = await run(["daemon", "run", "nobody"]);
     expect(r.code).toBe(1);
     expect(r.out).toContain("NO_ACCOUNT");

@@ -147,6 +147,30 @@ async function waitReady(ctx: Ctx, s: ServiceManager, name: string, verb: string
   ]);
 }
 
+/** Unit states in which the daemon may still be running. */
+const RUNNING = new Set(["active", "activating", "deactivating", "reloading", "refreshing"]);
+
+/**
+ * Waits until the unit is seen stopped, the way waitReady waits for it to answer. A unit that
+ * stays up is SERVICE_FAILED, never "stopped" (specs/conventions.md "Reads fail closed").
+ */
+async function waitStopped(s: ServiceManager, name: string): Promise<UnitState> {
+  const unit = unitName(name);
+  const deadline = Date.now() + READY.waitMs;
+  let st = await s.show(unit);
+  while (RUNNING.has(st.active)) {
+    if (Date.now() >= deadline) {
+      throw failure(`daemon stop ${name}: the service is still ${st.active} (${st.sub}).`, "SERVICE_FAILED", [
+        `Run \`whatsapp-axi daemon status ${name}\` to see the service and the daemon`,
+        `Run \`whatsapp-axi daemon logs ${name}\` to see why`,
+      ]);
+    }
+    await new Promise((r) => setTimeout(r, READY.pollMs));
+    st = await s.show(unit);
+  }
+  return st;
+}
+
 // ---- install ---------------------------------------------------------------
 
 const NAME = { name: "name", required: false, desc: "the account (or --account)" };
@@ -298,7 +322,7 @@ export async function daemonControl(ctx: Ctx, args: string[], verb: "start" | "s
   if (verb === "stop" && before.active !== "active" && before.active !== "activating")
     return { action: "unchanged", reason: `${name} is already stopped (no-op)` };
   await systemctl(s, [verb, unit]);
-  const after = verb === "stop" ? await s.show(unit) : await waitReady(ctx, s, name, verb);
+  const after = verb === "stop" ? await waitStopped(s, name) : await waitReady(ctx, s, name, verb);
   return {
     action: PAST[verb],
     service: `${after.active} (${after.sub})`,
@@ -384,11 +408,12 @@ export async function daemonLogs(ctx: Ctx, args: string[], write: (s: string) =>
   }
   if (follow) return { action: "stopped", note: "the follow was interrupted" };
   const real = got.filter((l) => !l.startsWith("-- "));
-  // journalctl can exit 0 having read nothing at all (no journal files, no permission). That is
-  // a failure to read the log, never an empty log; only "-- No entries --" is a real empty one.
-  if (real.length === 0 && !got.some((l) => l.startsWith("-- No entries")) && r.stderr.trim()) {
-    throw failure(`journalctl read no log: ${r.stderr.trim().split("\n")[0]}`, "LOGS_FAILED", unreadable);
-  }
+  // journalctl can exit 0 having read nothing at all (no journal files, no permission). Only
+  // "-- No entries --" with nothing else on stderr is an empty log; any other stderr line, or no
+  // output at all, is a failure to read it, never "0 lines" (specs/conventions.md "Reads fail closed").
+  const unexpected = unexpectedStderr(r.stderr);
+  if (unexpected) throw failure(`journalctl did not read the log in full: ${unexpected}`, "LOGS_FAILED", unreadable);
+  if (got.length === 0) throw failure("journalctl printed nothing, not even `-- No entries --`", "LOGS_FAILED", unreadable);
   if (real.length === 0)
     return {
       log: `0 lines for ${unit}`,
@@ -397,6 +422,25 @@ export async function daemonLogs(ctx: Ctx, args: string[], write: (s: string) =>
         : { help: [`Run \`whatsapp-axi daemon install ${name}\` to log to the journal; a foreground daemon logs to its terminal`] }),
     };
   return { unit, count: `${real.length} of the last ${lines} asked for`, log: real.map((l) => ({ line: l })) };
+}
+
+/**
+ * The first stderr line of journalctl that is not its known notice ("Hint: ..." and the indented
+ * lines that continue it), or undefined when there is none.
+ */
+export function unexpectedStderr(stderr: string): string | undefined {
+  let inHint = false;
+  for (const l of stderr.split("\n")) {
+    if (!l.trim()) continue;
+    if (l.startsWith("Hint:")) {
+      inHint = true;
+      continue;
+    }
+    if (inHint && /^\s/.test(l)) continue;
+    inHint = false;
+    return l.trim();
+  }
+  return undefined;
 }
 
 // ---- upgrade -----------------------------------------------------------------

@@ -1,7 +1,9 @@
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { READY } from "../src/commands/daemon.js";
+import { SystemdUser } from "../src/service.js";
+import { setServiceFactory } from "../src/context.js";
 import { VERSION } from "../src/version.js";
 import { addAccount, FakeDaemon, makeEnv, run, service, socketPath, STATUS, type Env } from "./helpers.js";
 
@@ -204,6 +206,59 @@ describe("daemon start, stop, restart, status, uninstall", () => {
     }
   });
 
+  it("a service state that cannot be read is SERVICE_FAILED, never unknown or already stopped", async () => {
+    // The real service manager client, over a systemctl that cannot reach the user bus.
+    await run(["daemon", "install", "example"]);
+    const bin = join(env.home, "fakebin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "systemctl"), `#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n`);
+    chmodSync(join(bin, "systemctl"), 0o755);
+    const savedPath = process.env.PATH;
+    process.env.PATH = `${bin}:${savedPath}`;
+    setServiceFactory(() => new SystemdUser());
+    try {
+      await expect(new SystemdUser().show("whatsapp-axi@example.service")).rejects.toMatchObject({ code: "SERVICE_FAILED" });
+      for (const verb of ["status", "stop", "start", "restart"]) {
+        const r = await run(["daemon", verb, "example"]);
+        expect(r.code, `${verb}: ${r.out}`).toBe(1);
+        expect(r.out).toContain("code: SERVICE_FAILED");
+        expect(r.out).toContain("Failed to connect to bus");
+        expect(r.out).not.toContain("already stopped");
+        expect(r.out).not.toContain("unknown");
+      }
+      // An exit 0 that names no state is no better.
+      writeFileSync(join(bin, "systemctl"), `#!/bin/sh\nexit 0\n`);
+      const r = await run(["daemon", "status", "example"]);
+      expect(r.code, r.out).toBe(1);
+      expect(r.out).toContain("code: SERVICE_FAILED");
+    } finally {
+      process.env.PATH = savedPath;
+      setServiceFactory(() => service);
+    }
+  });
+
+  it("daemon stop reports stopped only once the unit is seen inactive", async () => {
+    const saved = { ...READY };
+    READY.waitMs = 300;
+    READY.pollMs = 20;
+    try {
+      await run(["daemon", "install", "example"]);
+      service.stopSticks = true;
+      let r = await run(["daemon", "stop", "example"]);
+      expect(r.code, r.out).toBe(1);
+      expect(r.out).toContain("code: SERVICE_FAILED");
+      expect(r.out).toContain("still active (running)");
+      expect(r.out).not.toContain("action: stopped");
+      service.stopSticks = false;
+      r = await run(["daemon", "stop", "example"]);
+      expect(r.code, r.out).toBe(0);
+      expect(r.out).toContain("action: stopped");
+    } finally {
+      Object.assign(READY, saved);
+      service.stopSticks = false;
+    }
+  });
+
   it("uninstalls with --confirm, leaving the account's files", async () => {
     addAccount(env, "other");
     await run(["daemon", "install", "example"]);
@@ -249,6 +304,44 @@ describe("daemon logs", () => {
     expect(r.out).toContain("insufficient permissions");
     r = await run(["daemon", "logs", "example", "--lines", "0"]);
     expect(r.code).toBe(2);
+  });
+
+  it("reads -- No entries -- as empty only with nothing else on stderr", async () => {
+    // journalctl 255 with no journal files: "-- No entries --", exit 0, and a line on stderr.
+    service.logLines = ["-- No entries --"];
+    service.logResult = { code: 0, stdout: "", stderr: "No journal files were found.\n" };
+    let r = await run(["daemon", "logs", "example"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("code: LOGS_FAILED");
+    expect(r.out).toContain("No journal files were found");
+    expect(r.out).not.toContain("0 lines");
+    // Nothing at all, exit 0.
+    service.logLines = [];
+    service.logResult = { code: 0, stdout: "", stderr: "" };
+    r = await run(["daemon", "logs", "example"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("code: LOGS_FAILED");
+    expect(r.out).not.toContain("0 lines");
+    // Lines read, but a warning on stderr: not the whole log.
+    service.logLines = ["2030-01-05T14:00:00+0000 host whatsapp-axid[1]: level=INFO msg=listening"];
+    service.logResult = { code: 0, stdout: "", stderr: "Journal file /x.journal is truncated, ignoring file.\n" };
+    r = await run(["daemon", "logs", "example"]);
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("code: LOGS_FAILED");
+    // A true empty log, with or without journalctl's own notice.
+    service.logLines = ["-- No entries --"];
+    service.logResult = { code: 0, stdout: "", stderr: "" };
+    r = await run(["daemon", "logs", "example"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("0 lines for whatsapp-axi@example.service");
+    service.logResult = {
+      code: 0,
+      stdout: "",
+      stderr: "Hint: You are currently not seeing messages from other users and the system.\n      Users in groups 'adm' can see all messages.\n      Pass -q to turn off this notice.\n",
+    };
+    r = await run(["daemon", "logs", "example"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("0 lines for whatsapp-axi@example.service");
   });
 });
 
