@@ -206,6 +206,7 @@ describe("daemon start, stop, restart, status, uninstall", () => {
     }
   });
 
+  // Spawns a fake systemctl for every call: room for a loaded machine.
   it("a service state that cannot be read is SERVICE_FAILED, never unknown or already stopped", async () => {
     // The real service manager client, over a systemctl that cannot reach the user bus.
     await run(["daemon", "install", "example"]);
@@ -235,7 +236,7 @@ describe("daemon start, stop, restart, status, uninstall", () => {
       process.env.PATH = savedPath;
       setServiceFactory(() => service);
     }
-  });
+  }, 60_000);
 
   it("daemon stop reports stopped only once the unit is seen inactive", async () => {
     const saved = { ...READY };

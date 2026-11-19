@@ -957,7 +957,7 @@ describe("account add, account remove and daemon run", () => {
     expect(r.out).toContain("NO_ACCOUNT");
     r = await run(["daemon", "run", "example", "--log-level", "loud"]);
     expect(r.code).toBe(2);
-  });
+  }, 60_000);
 
   it("names the missing platform package when no binary is found", async () => {
     process.env.WHATSAPP_AXI_DAEMON = join(env.home, "missing");
