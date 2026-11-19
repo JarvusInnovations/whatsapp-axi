@@ -58,7 +58,11 @@ describe.skipIf(!ready)("end to end with the real daemon", () => {
     expect(r.out).toContain("scope: dm-only");
     r = await run(["scope", "set", "dm-only"]);
     expect(r.out).toContain("no-op");
+    // Under dm-only, a chat raised to tagged widens it: the daemon and the CLI both gate it.
     r = await run(["scope", "set", "--chat", "120363000000000001@g.us", "tagged"]);
+    expect(r.code, r.out).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
+    r = await run(["scope", "set", "--chat", "120363000000000001@g.us", "tagged", "--confirm"]);
     expect(r.code, r.out).toBe(0);
 
     r = await run(["operators", "add", "+15550100001"]);

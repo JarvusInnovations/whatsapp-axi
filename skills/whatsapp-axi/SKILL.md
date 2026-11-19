@@ -86,7 +86,7 @@ expect it.
 ### Settings
 
 - `npx -y whatsapp-axi scope show [--json-out[=path]]` — Account scope, dm_from, and every per-chat override
-- `npx -y whatsapp-axi scope set <scope> [--chat <chat>] [--confirm] [--json-out[=path]]` — Set the account scope (full, tagged, dm-only), or with --chat a chat's override (full, tagged, none, default). Setting full needs --confirm
+- `npx -y whatsapp-axi scope set <scope> [--chat <chat>] [--confirm] [--json-out[=path]]` — Set the account scope (full, tagged, dm-only), or with --chat a chat's override (full, tagged, none, default). A change that widens any chat's effective scope needs --confirm
 - `npx -y whatsapp-axi scope dm-from <who> [--confirm] [--json-out[=path]]` — Set whose direct messages are kept: operators or anyone. Setting anyone needs --confirm
 - `npx -y whatsapp-axi operators list [--json-out[=path]]` — The account's operators
 - `npx -y whatsapp-axi operators add <user> [--confirm] [--json-out[=path]]` — Add an operator, by phone number in E.164 form or by hidden id. Needs --confirm: under dm_from operators it widens whose direct messages are kept

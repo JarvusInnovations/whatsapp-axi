@@ -546,14 +546,66 @@ describe("scope, operators and settings", () => {
     expect(r.out).toContain("action: set");
     expect(r.out).toContain("scope: none");
     expect(r.out).toContain("note: was default");
-    expect(r.out).toContain(`whatsapp-axi scope set default --chat ${GROUP}`);
+    expect(r.out).toContain(`whatsapp-axi scope set default --chat ${GROUP} --confirm\` to undo`);
     expect(fake.seen.at(-1)?.body).toEqual({ chats: { [GROUP]: "none" } });
-    r = await run(["scope", "set", "--chat", GROUP, "default"]);
-    expect(fake.seen.at(-1)?.body).toEqual({ chats: { [GROUP]: null } });
+    // Clearing none under tagged widens the chat back, so it is gated.
+    r = await run(["scope", "set", "--chat", GROUP, "default", "--confirm"]);
+    expect(fake.seen.at(-1)?.body).toEqual({ chats: { [GROUP]: null }, confirm: true });
     expect(r.out).toContain("scope: default");
     expect(r.out).toContain("note: was none");
     r = await run(["scope", "set", "--chat", GROUP, "dm-only"]);
     expect(r.code).toBe(2);
+  });
+
+  it("gates any change that widens a chat's effective scope, judged by effect", async () => {
+    const patches = () => fake.seen.filter((x) => x.method === "PATCH").length;
+    // The account's scope raised one step, dm-only to tagged.
+    fake.settings.scope = "dm-only";
+    let n = patches();
+    let r = await run(["scope", "set", "tagged"]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
+    expect(r.out).toContain("whatsapp-axi scope set tagged --confirm");
+    expect(patches()).toBe(n);
+    // A chat override raised from none to tagged.
+    fake.settings.scope = "tagged";
+    fake.settings.chats = { [GROUP]: "none" } as never;
+    r = await run(["scope", "set", "tagged", "--chat", GROUP]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
+    expect(r.out).toContain(`whatsapp-axi scope set tagged --chat ${GROUP} --confirm`);
+    // An override of none removed under account scope full.
+    fake.settings.scope = "full";
+    r = await run(["scope", "set", "default", "--chat", GROUP]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("code: CONFIRM_REQUIRED");
+    expect(patches()).toBe(n);
+    r = await run(["scope", "set", "default", "--chat", GROUP, "--confirm"]);
+    expect(r.code, r.out).toBe(0);
+    expect(fake.seen.at(-1)?.body).toEqual({ chats: { [GROUP]: null }, confirm: true });
+    // Setting none under full is a tightening; its undo widens, so the hint carries --confirm.
+    r = await run(["scope", "set", "none", "--chat", GROUP]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain(`whatsapp-axi scope set default --chat ${GROUP} --confirm\` to undo`);
+    // Lowering the account scope: no gate; the undo carries --confirm.
+    r = await run(["scope", "set", "dm-only"]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("whatsapp-axi scope set full --confirm` to undo");
+    // Removing an override that narrows, and a tightening, need nothing.
+    fake.settings.scope = "tagged";
+    fake.settings.chats = { [GROUP]: "full" } as never;
+    n = patches();
+    r = await run(["scope", "set", "default", "--chat", GROUP]);
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain(`whatsapp-axi scope set full --chat ${GROUP} --confirm\` to undo`);
+    r = await run(["scope", "set", "none", "--chat", GROUP]);
+    expect(r.code, r.out).toBe(0);
+    expect(patches()).toBe(n + 2);
+    // The daemon's own refusal (a chat named another way) names the same command.
+    fake.route("PATCH /v1/settings", () => apiError(409, "CONFIRM_REQUIRED", "This change widens what the account reads (chats.x tagged); send it with confirm: true."));
+    r = await run(["scope", "set", "tagged", "--chat", "+15550100001"]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("whatsapp-axi scope set tagged --chat +15550100001 --confirm");
   });
 
   it("sets dm-from; anyone needs --confirm, operators does not", async () => {
