@@ -742,9 +742,26 @@ func TestSendIDReplay(t *testing.T) {
 		t.Fatalf("outcome unknown without its id: %v", e)
 	}
 	d.fake.SetSendErr(nil)
+	before := len(d.fake.Sent())
 	if e := d.wantError("POST", "/v1/send", map[string]any{"chat": group, "text": "unsure", "id": unsure}, 504, "OUTCOME_UNKNOWN"); e["id"] != unsure {
 		t.Fatalf("%v", e)
 	}
+	if n := len(d.fake.Sent()); n != before {
+		t.Fatalf("a replay of a pending send sent again (%d, was %d)", n, before)
+	}
+}
+
+// TestReactOutcomeUnknown: a reaction the client cannot settle is OUTCOME_UNKNOWN, a refusal is
+// a plain failure (specs/sending.md "The same holds for a reaction").
+func TestReactOutcomeUnknown(t *testing.T) {
+	d, parent := keptGroup(t)
+	d.fake.SetSendErr(fmt.Errorf("%w: disconnected", client.ErrOutcomeUnknown))
+	e := d.wantError("POST", "/v1/react", map[string]any{"chat": group, "id": parent.ID, "emoji": "👍"}, 504, "OUTCOME_UNKNOWN")
+	if !strings.Contains(e["message"].(string), "may have gone out") {
+		t.Fatalf("%v", e)
+	}
+	d.fake.SetSendErr(fmt.Errorf("refused"))
+	d.wantError("POST", "/v1/react", map[string]any{"chat": group, "id": parent.ID, "emoji": "👍"}, 502, "UPSTREAM_ERROR")
 }
 
 // TestEventsSince: since keeps events kept at or after an instant, and total counts them.

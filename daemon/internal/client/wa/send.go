@@ -8,6 +8,7 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/socket"
 	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
 
@@ -132,19 +133,41 @@ func (c *Client) Send(ctx context.Context, m client.OutMessage) (client.SendResu
 	}
 	resp, err := wa.SendMessage(ctx, to, BuildMessage(m, up), whatsmeow.SendRequestExtra{ID: types.MessageID(m.ID)})
 	if err != nil {
-		return client.SendResult{}, sendErr(err)
+		return client.SendResult{}, sendErr(err, resp.DebugTimings)
 	}
 	return client.SendResult{Chat: nonADString(resp.Chat), Sender: nonADString(resp.Sender), Time: resp.Timestamp, Media: media}, nil
 }
 
-// sendErr marks the errors after which a message may have gone out: no answer to it in time, or
-// the wait cut short. Everything else means WhatsApp did not take it.
-func sendErr(err error) error {
-	if errors.Is(err, whatsmeow.ErrMessageTimedOut) || errors.Is(err, whatsmeow.ErrIQTimedOut) ||
-		errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return fmt.Errorf("%w: %w", client.ErrOutcomeUnknown, err)
+// sendErr classifies an error from SendMessage by whether the message's frame was written
+// (specs/sending.md "After the frame is written, only a refusal is a failure").
+//
+// At the pinned whatsmeow, SendMessage builds and encrypts the message, writes the frame (the
+// step its timings call Send), waits for the server's answer, and on a disconnect waits for a
+// reconnect and writes the frame again. So:
+//   - an error from before the write (Send not timed: not logged in, a recipient lookup, an
+//     encryption failure) is definite: nothing went out;
+//   - an error from the write step that proves nothing was written (no socket, socket closed,
+//     frame too large; no answer was awaited yet) is definite;
+//   - ErrServerReturnedError is the server's own refusal, so it is definite;
+//   - anything else after the write (a disconnect, an auth stream error, ErrNotConnected while
+//     retrying, a write cut short, a timeout, a cancelled wait) may have gone out: unknown.
+func sendErr(err error, t whatsmeow.MessageDebugTimings) error {
+	if err == nil {
+		return nil
 	}
-	return err
+	if errors.Is(err, whatsmeow.ErrServerReturnedError) {
+		return err
+	}
+	var disc *whatsmeow.DisconnectedError
+	afterWrite := errors.As(err, &disc) || errors.Is(err, whatsmeow.ErrMessageTimedOut)
+	if t.Send == 0 && !afterWrite {
+		return err
+	}
+	if t.Resp == 0 && t.Retry == 0 && !afterWrite &&
+		(errors.Is(err, whatsmeow.ErrNotConnected) || errors.Is(err, socket.ErrSocketClosed) || errors.Is(err, socket.ErrFrameTooLarge)) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", client.ErrOutcomeUnknown, err)
 }
 
 func nonADString(j types.JID) string {
@@ -171,7 +194,7 @@ func (c *Client) React(ctx context.Context, chat, sender, id, emoji string) (cli
 	}
 	resp, err := wa.SendMessage(ctx, cj, wa.BuildReaction(cj, sj, types.MessageID(id), emoji))
 	if err != nil {
-		return client.SendResult{}, sendErr(err)
+		return client.SendResult{}, sendErr(err, resp.DebugTimings)
 	}
 	return client.SendResult{Chat: nonADString(resp.Chat), Sender: nonADString(resp.Sender), Time: resp.Timestamp}, nil
 }
