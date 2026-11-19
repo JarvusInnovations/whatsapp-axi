@@ -172,7 +172,7 @@ export class Daemon {
               return;
             }
             if (typeof json !== "object" || json === null || Array.isArray(json)) {
-              reject(this.badResponse("not a JSON object"));
+              reject(send && res.statusCode === 200 ? this.outcomeUnknown(send, "the answer was not the expected object") : this.badResponse("not a JSON object"));
               return;
             }
             resolve({ status: res.statusCode ?? 0, json: json as Json });
@@ -258,12 +258,16 @@ export class Daemon {
 
   /**
    * A send, a file or a reaction: waits as long as the daemon's own send timeout allows, plus a
-   * margin, never less. When the CLI stops waiting the outcome is unknown, never a plain failure.
+   * margin, never less. When the CLI stops waiting the outcome is unknown, never a plain failure;
+   * so is a success answer that fails `valid`.
    */
-  async send(path: string, body: Json, ctx: SendContext = {}): Promise<Json> {
+  async send(path: string, body: Json, ctx: SendContext = {}, valid?: (json: Json) => boolean): Promise<Json> {
     const st = this.checked ?? (await this.status());
     const { status, json } = await this.raw("POST", path, body, { ...ctx, timeoutMs: this.sendTimeoutMs(st) });
     if (status < 200 || status > 299) this.fail(status, json, ctx);
+    // A success answer the CLI cannot read leaves the outcome unknown, as a non-JSON one does
+    // (specs/sending.md "An answer the CLI cannot read is unknown too").
+    if (valid && !valid(json)) throw this.outcomeUnknown(ctx, "the answer lacked its fields");
     output.body = json;
     return json;
   }
