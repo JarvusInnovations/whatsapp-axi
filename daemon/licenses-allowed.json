@@ -1,0 +1,5 @@
+{
+  "$comment": "Licences allowed in a compiled whatsapp-axid (specs/distribution.md \"Licence\"). Every one must be compatible with distributing the binary under GPL-3.0. A dependency whose licence is not listed fails `bun run check:licenses`; adding a licence here is a change to the licence position and needs review. `modules` pins a licence for a module whose licence file cannot be classified, with the reason.",
+  "allowed": ["Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "GPL-3.0", "ISC", "MIT", "MPL-2.0"],
+  "modules": {}
+}

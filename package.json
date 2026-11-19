@@ -1,0 +1,58 @@
+{
+  "name": "whatsapp-axi",
+  "version": "0.1.0",
+  "description": "Agent-ergonomic CLI and local daemon for WhatsApp accounts",
+  "scripts": {
+    "build": "tsc && chmod +x dist/bin/whatsapp-axi.js",
+    "lint": "oxlint src bin test",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build",
+    "test": "vitest run",
+    "build:daemon": "cd daemon && CGO_ENABLED=0 go build -ldflags \"-X main.version=$npm_package_version\" -o bin/whatsapp-axid ./cmd/whatsapp-axid",
+    "docs": "node scripts/build-skill.mjs",
+    "docs:check": "node scripts/build-skill.mjs --check",
+    "check:scrub": "bash scripts/scrub-check.sh",
+    "format": "oxfmt src bin test scripts vitest.config.ts",
+    "format:check": "oxfmt --check src bin test scripts vitest.config.ts",
+    "build:packages": "node scripts/build-packages.mjs",
+    "check:licenses": "node scripts/daemon-licenses.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JarvusInnovations/whatsapp-axi.git"
+  },
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/JarvusInnovations/whatsapp-axi/issues"
+  },
+  "homepage": "https://github.com/JarvusInnovations/whatsapp-axi#readme",
+  "type": "module",
+  "bin": {
+    "whatsapp-axi": "dist/bin/whatsapp-axi.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "dist",
+    "skills/whatsapp-axi",
+    "LICENSE",
+    "README.md"
+  ],
+  "dependencies": {
+    "@toon-format/toon": "^4.4.0",
+    "axi-sdk-js": "^0.1.14",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/qrcode": "^1.5.6",
+    "oxfmt": "^0.78.0",
+    "oxlint": "^1.93.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
