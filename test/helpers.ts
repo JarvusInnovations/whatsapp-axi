@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { main } from "../src/cli.js";
 import { makeCtx, setServiceFactory, type Ctx } from "../src/context.js";
 import type { CommandResult, ServiceManager, UnitState } from "../src/service.js";
+import { VERSION } from "../src/version.js";
 
 /**
  * A fake systemd user manager: records every call, keeps unit states, and creates and removes the
@@ -238,7 +239,9 @@ export const STATUS = {
   since: "2030-01-05T14:00:00Z",
   reason: "",
   me: { id: "100000000000000@lid", lid: "100000000000000@lid", pn: "+15550100000", name: "", me: true, operator: false },
-  daemon_version: "0.1.0",
+  // The CLI's own version, whatever the build stamped: a release build carries the tag's version,
+  // not the placeholder in package.json, and a fixed string here fails doctor's versions check.
+  daemon_version: VERSION,
   library_version: "v0.0.0-test",
   last_phone_activity: "2030-01-05T13:00:00Z",
   last_phone_activity_approximate: true,
