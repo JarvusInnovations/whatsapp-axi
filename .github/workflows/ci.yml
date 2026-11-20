@@ -1,6 +1,17 @@
 name: CI
 
+# Also the publish gate: publish-npm.yml calls this workflow at the release tag with the release
+# version, so a release runs exactly these checks. Every job stamps a version into package.json
+# before building, as a release does: the release version there, 0.0.0-ci on a push or pull
+# request. Neither is the placeholder in package.json, so nothing can pass only because the
+# version happens to equal it.
 on:
+  workflow_call:
+    inputs:
+      version:
+        description: The version to stamp, from the release tag (vX.Y.Z without the v)
+        required: true
+        type: string
   push:
     branches: [main, develop]
   pull_request:
@@ -10,6 +21,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  STAMP_VERSION: ${{ inputs.version || '0.0.0-ci' }}
 
 jobs:
   daemon:
@@ -63,10 +77,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .tool-versions
+          package-manager-cache: false
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .tool-versions
+
+      - name: Stamp the version
+        run: npm version --no-git-tag-version --allow-same-version "$STAMP_VERSION"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -85,6 +103,9 @@ jobs:
 
       - name: The skill is current with the command reference
         run: bun run docs:check
+
+      - name: The built CLI reports the stamped version
+        run: test "$(node dist/bin/whatsapp-axi.js --version)" = "$STAMP_VERSION"
 
       - name: Smoke test the built CLI with no account and no daemon
         # --version and --help never reach dispatch. A real command with no account must give a
@@ -131,6 +152,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version-file: .tool-versions
+          package-manager-cache: false
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -140,6 +162,9 @@ jobs:
         with:
           go-version-file: .tool-versions
           cache-dependency-path: daemon/go.sum
+
+      - name: Stamp the version
+        run: npm version --no-git-tag-version --allow-same-version "$STAMP_VERSION"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
