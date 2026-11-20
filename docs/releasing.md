@@ -15,11 +15,11 @@ PR into `main`, and **merging that PR publishes**.
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `ci.yml` | push / PR to `main` or `develop` | Daemon and CLI checks; the `packages` job runs the licence gate, cross-compiles the four daemons, assembles and packs the five packages, and installs the packed CLI and platform package from local tarballs to run them |
+| `ci.yml` | push / PR to `main` or `develop`; called by `publish-npm.yml` as its gate | Stamps a version into `package.json` first (`0.0.0-ci`, or the release version when called), then the daemon and CLI checks; the `packages` job runs the licence gate, cross-compiles the four daemons, assembles and packs the five packages, and installs the packed CLI and platform package from local tarballs to run them |
 | `release-prepare.yml` | push to `develop` | Opens or refreshes the `Release: vX.Y.Z` PR and its bot `## Changelog` comment |
 | `release-validate.yml` | PR to `main` | Title format and tag collision |
 | `release-publish.yml` | Release PR merged | Tags `main`'s merge commit `vX.Y.Z` and creates the GitHub release (uses the org secret `BOT_GITHUB_TOKEN`) |
-| `publish-npm.yml` | GitHub release published | `gate`: version from the tag, the full CI gate at the tag. `publish-npm`: `bun run build:packages`, then the four platform packages, then `whatsapp-axi`, with trusted publishing (OIDC, no token) and provenance; `-rc.N` goes under the `next` dist-tag; a version already on the registry is skipped with a warning; a missing platform package stops the run before the main package |
+| `publish-npm.yml` | GitHub release published | `version`: from the tag, checked to be `X.Y.Z` or `X.Y.Z-rc.N`. `gate`: `ci.yml` itself at the tag, stamped with that version, so a release runs the same checks as a pull request. `publish-npm`: `bun run build:packages`, then the four platform packages, then `whatsapp-axi`, with trusted publishing (OIDC, no token) and provenance; `-rc.N` goes under the `next` dist-tag; a version already on the registry is skipped with a warning; a missing platform package stops the run before the main package |
 | `library-latest.yml` | weekly, or by hand | Builds and tests against the latest whatsmeow; opens or comments on an issue when that fails |
 
 **The trusted-publisher setting of each package names `publish-npm.yml`.** Renaming that file
@@ -29,7 +29,9 @@ stops publishing until all five packages are reconfigured.
 
 1. `package.json` says `0.1.0` in git and is never bumped in a commit. The tag is the version.
 2. `release-publish` cuts `vX.Y.Z` from the Release PR's title.
-3. `publish-npm.yml` runs `npm version --no-git-tag-version --allow-same-version X.Y.Z`, then
+3. `publish-npm.yml` runs `npm version --no-git-tag-version --allow-same-version X.Y.Z` (its gate,
+   `ci.yml`, does the same; on a pull request it stamps `0.0.0-ci`, so no test can depend on the
+   placeholder), then
    `bun run build:packages` stamps `X.Y.Z` into the daemon binaries, every platform package and the
    main package's `optionalDependencies`.
 
