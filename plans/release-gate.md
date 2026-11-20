@@ -1,5 +1,6 @@
 ---
-status: in-progress
+status: done
+pr: 34
 depends: [review-v0-1-0]
 specs:
   - specs/conventions.md
@@ -37,7 +38,8 @@ matched the placeholder. `doctor` was right: a daemon on another version is a fa
 - [x] With the fix, the whole gate set (scrub, lint, format, typecheck, build, docs check,
       `--version` equals the stamp, licence gate, `go vet`, `go test`, daemon build, CLI tests)
       passes stamped `0.0.0-ci`, `0.1.1` and `0.1.0`.
-- [ ] CI on the pull request is green with the `0.0.0-ci` stamp, which the old fixture fails.
+- [x] CI on the pull request is green with the `0.0.0-ci` stamp; locally the old fixture fails
+      the same two tests under that stamp.
 
 ## Risks
 
