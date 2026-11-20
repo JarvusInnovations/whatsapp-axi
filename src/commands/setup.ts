@@ -480,11 +480,16 @@ export async function setupHooksUninstall(ctx: Ctx, args: string[]): Promise<unk
   const after = hookStatus(ctx, scope, project);
   const left = after.rows.filter((r) => r.status === "installed" || r.status === "stale").map((r) => r.agent);
   if (errors.length || left.length) {
-    throw failure(
-      `setup hooks uninstall did not finish at ${scope} scope: ${errors.length ? errors.join("; ") : `still installed for ${left.join(", ")}`}`,
+    // Say what was already removed, not only what failed.
+    const removed = present.filter((a) => !left.includes(a));
+    const err = failure(
+      `setup hooks uninstall did not finish at ${scope} scope: ${errors.length ? errors.join("; ") : `still installed for ${left.join(", ")}`}` +
+        (removed.length ? `; already removed for ${removed.join(", ")}` : "; nothing was removed"),
       "SETUP_FAILED",
       [`Run \`whatsapp-axi setup hooks uninstall${scopeFlags(scope, p.flags.dir)}\` again after fixing the files named above`],
     );
+    err.before = { removed: removed.length ? removed.join(", ") : "none", ...(left.length ? { still_installed: left.join(", ") } : {}) };
+    throw err;
   }
   if (!present.length) return { action: "unchanged", reason: `not installed at ${scope} scope (no-op)`, scope };
   return {

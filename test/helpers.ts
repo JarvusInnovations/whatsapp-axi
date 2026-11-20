@@ -21,6 +21,8 @@ export class FakeService implements ServiceManager {
   logLines: string[] = [];
   logResult: CommandResult = { code: 0, stdout: "", stderr: "" };
   failVerb: string | undefined;
+  /** When set, a stop is accepted but the unit stays as it was (a unit that will not go down). */
+  stopSticks = false;
   /** A started unit runs a fake daemon on the account's socket, as the real service would. */
   runDaemons = true;
   /** When set, a started unit ends in this state and serves nothing (failed, activating). */
@@ -95,7 +97,7 @@ export class FakeService implements ServiceManager {
         await this.set(unit, true);
         break;
       case "stop":
-        await this.set(unit, false);
+        if (!this.stopSticks) await this.set(unit, false);
         break;
     }
     return { code: 0, stdout: "", stderr: "" };
@@ -206,6 +208,8 @@ export interface Reply {
   lines?: unknown[];
   /** For streams: end the response after the lines (a stream with a final line). */
   end?: boolean;
+  /** For streams: drop the connection after the lines (a daemon that went away mid-stream). */
+  dropAfter?: boolean;
   /** Never answer (a daemon that hangs). */
   hang?: boolean;
   /** Drop the connection without answering. */
@@ -316,6 +320,7 @@ export class FakeDaemon {
         res.writeHead(200, { "Content-Type": "application/x-ndjson" });
         for (const l of reply.lines) res.write(JSON.stringify(l) + "\n");
         if (reply.end) res.end();
+        if (reply.dropAfter) setTimeout(() => req.socket.destroy(), 50);
         return;
       }
       let b = reply.body ?? {};

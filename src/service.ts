@@ -6,6 +6,7 @@ import { existsSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import type { Roots } from "./paths.js";
+import { failure } from "./errors.js";
 
 export const TEMPLATE = "whatsapp-axi@.service";
 
@@ -164,9 +165,17 @@ export class SystemdUser implements ServiceManager {
       const i = line.indexOf("=");
       if (i > 0) props[line.slice(0, i)] = line.slice(i + 1).trim();
     }
+    // A state that cannot be read is an error, never "unknown" (specs/conventions.md "Reads fail closed").
+    if (r.code !== 0 || !props.ActiveState) {
+      const reason = r.stderr.trim().split("\n")[0] || (r.code !== 0 ? `exit ${r.code}` : "no ActiveState in its answer");
+      throw failure(`systemctl --user show ${unit} failed: ${reason}`, "SERVICE_FAILED", [
+        "Check that the user service manager is running (it needs lingering or a login session)",
+        "Run `whatsapp-axi doctor` for the service checks",
+      ]);
+    }
     const pid = Number(props.MainPID);
     return {
-      active: props.ActiveState || "unknown",
+      active: props.ActiveState,
       sub: props.SubState || "",
       enabled: props.UnitFileState || "",
       since: props.ActiveEnterTimestamp || null,

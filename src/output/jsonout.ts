@@ -3,9 +3,9 @@
 // checked and the file opened before the command does anything; the client records what it
 // received here; the dispatcher writes the file afterwards. A failed write after a successful
 // command never undoes the success: it is `export_error:` and exit 1.
-import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, rmSync, writeSync } from "node:fs";
+import { closeSync, constants, fchmodSync, lstatSync, mkdirSync, openSync, rmSync, statSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { failure, usage } from "../errors.js";
 import { isFlagToken } from "../flags.js";
 
@@ -145,7 +145,18 @@ export function openJsonOut(path: string, command: string, now = Date.now()): Js
     return { path, fd, lines: 0, overwrote, device: existed };
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    throw unwritable(path, code === "ELOOP" ? "it is a symlink" : code === "ENOENT" ? "its directory does not exist" : (code ?? (err as Error).message));
+    throw unwritable(path, code === "ELOOP" ? "it is a symlink" : code === "ENOENT" ? enoentReason(path) : (code ?? (err as Error).message));
+  }
+}
+
+/** Why a file could not be created where open said ENOENT: its directory is missing, or refuses new files (/proc). */
+function enoentReason(path: string): string {
+  const dir = dirname(path);
+  try {
+    if (statSync(dir).isDirectory()) return `its directory ${dir} exists but no file can be created in it (ENOENT)`;
+    return `${dir} is not a directory`;
+  } catch {
+    return "its directory does not exist";
   }
 }
 

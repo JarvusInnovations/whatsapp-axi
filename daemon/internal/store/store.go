@@ -1,5 +1,5 @@
 // Package store owns the schema of store.db: kept messages, the account's own messages, chats,
-// chat aliases, reactions, discard counters and the event sequence.
+// chat aliases, reactions, discard counters, the event sequence and recent send times.
 package store
 
 import (
@@ -91,6 +91,12 @@ CREATE INDEX events_message ON events(chat_id, message_id);
 	`
 ALTER TABLE messages ADD COLUMN read_marked INTEGER NOT NULL DEFAULT 0;
 UPDATE messages SET read_marked=1;
+`,
+	// send_times records when each send or reaction went to WhatsApp, so the hour and minute rate
+	// limits survive a restart (specs/sending.md "Send limits"). Only times: no chat, no content.
+	`
+CREATE TABLE send_times (t INTEGER NOT NULL);
+CREATE INDEX send_times_t ON send_times(t);
 `,
 }
 

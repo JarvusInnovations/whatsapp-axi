@@ -22,6 +22,16 @@ Everything an account sends goes through its daemon, one message at a time.
   `OUTCOME_UNKNOWN`, never a plain failure, and its help says to check `read <chat>` before
   sending again: a retry may duplicate a message that went out. The message's row stays
   `pending` until the daemon learns the outcome.
+- **After the frame is written, only a refusal is a failure.** Once the daemon has handed the
+  message to WhatsApp, an error is a definite failure only when it proves the server refused
+  the message. Anything else (a disconnect, a stream error, a lost connection, a timeout) is
+  `OUTCOME_UNKNOWN` and the row stays `pending`. An error raised before anything was written
+  (not connected at the start, encryption failed) is a definite failure. The same holds for a
+  reaction.
+  > Why: a failed row is removed and sent again on a retry with the same id, so calling a
+  > send that may have gone out "failed" turns the replay guard into a duplicate send.
+- **An answer the CLI cannot read is unknown too.** A success answer to a send that is not the
+  expected object, or lacks the id or chat, is `OUTCOME_UNKNOWN`, as a non-JSON answer is.
 - **A send is replayable by its id** ([conventions.md](conventions.md), "Send ids"). A send whose
   `id` is already recorded as sent for that chat answers the recorded result with
   `already_sent: true` and sends nothing, before any limit or connection check. One still
@@ -88,6 +98,9 @@ caller is covered.
 - Reactions count toward the rate limits. Downloads do not.
 - "Same text" compares text after trimming whitespace. The daemon remembers a hash of recent
   texts in memory only.
+- **The rate limits survive a restart.** The hour and minute counts come from the times of the
+  sends the daemon has recorded, so restarting the daemon does not clear them. The same-text
+  memory does not survive one: a restart forgets it, and that is a known limit.
 - A request that fails a limit sends nothing and records nothing.
 - In `suspended`, `logged_out` and `outdated`, every send fails with `NOT_CONNECTED`.
 - There is no command to create a group, add members to one, send to a broadcast list or post a

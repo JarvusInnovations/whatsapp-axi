@@ -147,6 +147,27 @@ describe("setup hooks", () => {
   });
 });
 
+describe("setup hooks uninstall", () => {
+  it("a partial failure names what was already removed as well as what failed", async () => {
+    if (process.geteuid?.() === 0) return; // root ignores directory permissions
+    await hrun(["setup", "hooks", "--scope", "project", "--dir", project]);
+    const plugins = join(project, ".opencode", "plugins");
+    chmodSync(plugins, 0o500);
+    let r;
+    try {
+      r = await hrun(["setup", "hooks", "uninstall", "--scope", "project", "--dir", project]);
+    } finally {
+      chmodSync(plugins, 0o700);
+    }
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain("SETUP_FAILED");
+    expect(r.out).toContain(`removed: "claude, codex"`);
+    expect(r.out).toContain("already removed for claude, codex");
+    expect(r.out).toContain("still_installed: opencode");
+    expect(commands(join(project, ".claude", "settings.json"))).toEqual([]);
+  });
+});
+
 describe("session-start", () => {
   it("prints nothing at all, and exits 0, in a directory with no .whatsapp-axi.json", async () => {
     addAccount(env, "example");

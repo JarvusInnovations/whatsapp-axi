@@ -68,7 +68,7 @@ expect it.
 
 - `npx -y whatsapp-axi chats [--limit <n>] [--fields <list>] [--json-out[=path]]` — Chats with kept content: id, name, type, effective scope
 - `npx -y whatsapp-axi groups [--limit <n>] [--fields <list>] [--json-out[=path]]` — Every group the account is a member of, kept content or not: id, name, effective scope, member count
-- `npx -y whatsapp-axi chat view <chat> [--fields <list>] [--json-out[=path]]` — One chat, with participants marked me, operator, contact
+- `npx -y whatsapp-axi chat view <chat> [--limit <n>] [--fields <list>] [--json-out[=path]]` — One chat, with participants marked me, operator, contact
 - `npx -y whatsapp-axi events [--after <seq>] [--limit <n>] [--chat <chat>] [--kind <kind>] [--follow] [--mark-read] [--fields <list>] [--json-out[=path]]` — Events after a seq; the last line states the highest seq returned, for the next call
 - `npx -y whatsapp-axi read <chat> [--limit <n>] [--before <id>] [--mark-read] [--fields <list>] [--json-out[=path]]` — Kept messages of a chat, oldest first
 - `npx -y whatsapp-axi message view <ref> [--full] [--json-out[=path]]` — One kept message in full, with its reply context and media descriptor
@@ -86,7 +86,7 @@ expect it.
 ### Settings
 
 - `npx -y whatsapp-axi scope show [--json-out[=path]]` — Account scope, dm_from, and every per-chat override
-- `npx -y whatsapp-axi scope set <scope> [--chat <chat>] [--confirm] [--json-out[=path]]` — Set the account scope (full, tagged, dm-only), or with --chat a chat's override (full, tagged, none, default). Setting full needs --confirm
+- `npx -y whatsapp-axi scope set <scope> [--chat <chat>] [--confirm] [--json-out[=path]]` — Set the account scope (full, tagged, dm-only), or with --chat a chat's override (full, tagged, none, default). A change that widens any chat's effective scope needs --confirm
 - `npx -y whatsapp-axi scope dm-from <who> [--confirm] [--json-out[=path]]` — Set whose direct messages are kept: operators or anyone. Setting anyone needs --confirm
 - `npx -y whatsapp-axi operators list [--json-out[=path]]` — The account's operators
 - `npx -y whatsapp-axi operators add <user> [--confirm] [--json-out[=path]]` — Add an operator, by phone number in E.164 form or by hidden id. Needs --confirm: under dm_from operators it widens whose direct messages are kept

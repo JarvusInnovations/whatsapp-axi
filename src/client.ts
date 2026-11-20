@@ -66,11 +66,30 @@ export class Daemon {
     return `Run \`whatsapp-axi doctor${this.af}\` to check the daemon`;
   }
 
+  /** Whether the account is installed as a service; the not-running hint depends on it. */
+  installed?: () => boolean;
+
   notRunning(): ToolError {
-    return failure(`The daemon of account ${this.account} is not running.`, "DAEMON_NOT_RUNNING", [
-      `Run \`${startCommand(this.account)}\` to start it as a service`,
-      `Run \`whatsapp-axi daemon run ${this.account}\` to run it in the foreground instead`,
-    ]);
+    let installed = false;
+    try {
+      installed = this.installed?.() ?? false;
+    } catch {
+      // cannot tell: never suggest starting a service that may not exist
+    }
+    // `daemon start` only for an account installed as a service (specs/cli.md).
+    return failure(
+      `The daemon of account ${this.account} is not running.`,
+      "DAEMON_NOT_RUNNING",
+      installed
+        ? [
+            `Run \`${startCommand(this.account)}\` to start it as a service`,
+            `Run \`whatsapp-axi daemon run ${this.account}\` to run it in the foreground instead`,
+          ]
+        : [
+            `Run \`whatsapp-axi daemon install ${this.account}\` to run it as a service`,
+            `Run \`whatsapp-axi daemon run ${this.account}\` to run it in the foreground instead`,
+          ],
+    );
   }
 
   badResponse(what: string): ToolError {
@@ -172,7 +191,9 @@ export class Daemon {
               return;
             }
             if (typeof json !== "object" || json === null || Array.isArray(json)) {
-              reject(this.badResponse("not a JSON object"));
+              reject(
+                send && res.statusCode === 200 ? this.outcomeUnknown(send, "the answer was not the expected object") : this.badResponse("not a JSON object"),
+              );
               return;
             }
             resolve({ status: res.statusCode ?? 0, json: json as Json });
@@ -258,12 +279,16 @@ export class Daemon {
 
   /**
    * A send, a file or a reaction: waits as long as the daemon's own send timeout allows, plus a
-   * margin, never less. When the CLI stops waiting the outcome is unknown, never a plain failure.
+   * margin, never less. When the CLI stops waiting the outcome is unknown, never a plain failure;
+   * so is a success answer that fails `valid`.
    */
-  async send(path: string, body: Json, ctx: SendContext = {}): Promise<Json> {
+  async send(path: string, body: Json, ctx: SendContext = {}, valid?: (json: Json) => boolean): Promise<Json> {
     const st = this.checked ?? (await this.status());
     const { status, json } = await this.raw("POST", path, body, { ...ctx, timeoutMs: this.sendTimeoutMs(st) });
     if (status < 200 || status > 299) this.fail(status, json, ctx);
+    // A success answer the CLI cannot read leaves the outcome unknown, as a non-JSON one does
+    // (specs/sending.md "An answer the CLI cannot read is unknown too").
+    if (valid && !valid(json)) throw this.outcomeUnknown(ctx, "the answer lacked its fields");
     output.body = json;
     return json;
   }
@@ -326,7 +351,11 @@ export class Daemon {
       }
     } catch (err) {
       if ((err as Error).name === "AbortError" || signal?.aborted) return;
-      throw err;
+      if (err instanceof ToolError) throw err;
+      // The connection dropped mid-stream (the daemon went away): never an internal error
+      // (specs/conventions.md "Streams").
+      const code = (err as NodeJS.ErrnoException).code ?? (err as Error).message;
+      throw failure(`The connection to the daemon of account ${this.account} was lost mid-stream (${code}).`, "STREAM_CLOSED", [this.doctor()]);
     }
     if (buf.trim() && !signal?.aborted) throw this.badResponse("a stream line is not JSON");
     if (!signal?.aborted && !opts.endOk) {

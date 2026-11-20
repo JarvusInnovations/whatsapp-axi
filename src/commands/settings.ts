@@ -106,16 +106,24 @@ const CHAT_SCOPES = ["full", "tagged", "none", "default"];
 
 export const scopeSetSpec: CommandSpec = {
   name: "scope set",
-  summary: "Set the account scope (full, tagged, dm-only), or with --chat a chat's override (full, tagged, none, default). Setting full needs --confirm",
+  summary:
+    "Set the account scope (full, tagged, dm-only), or with --chat a chat's override (full, tagged, none, default). A change that widens any chat's effective scope needs --confirm",
   positionals: [{ name: "scope", required: true, desc: "full, tagged or dm-only; with --chat: full, tagged, none or default" }],
   flags: {
     chat: { type: "string", value: "<chat>", desc: "set this chat's override instead of the account scope" },
-    confirm: { type: "bool", desc: "required to set full" },
+    confirm: { type: "bool", desc: "required when the change widens what any chat keeps" },
   },
   examples: ["whatsapp-axi scope set tagged", "whatsapp-axi scope set none --chat 120363000000000001@g.us", "whatsapp-axi scope set full --confirm"],
   mutation: true,
   jsonOut: true,
 };
+
+/** Scopes ordered by how much they keep (specs/conventions.md "Widening is judged by effect"). */
+const SCOPE_RANK: Record<string, number> = { none: 0, "dm-only": 1, tagged: 2, full: 3 };
+const rank = (scope: string): number => SCOPE_RANK[scope] ?? 3;
+
+/** A chat's effective scope: its override, or the account's where it has none ("default"). */
+const effective = (override: string, accountScope: string): string => (override === "default" ? accountScope : override);
 
 export async function scopeSet(ctx: Ctx, args: string[]): Promise<unknown> {
   const p = parse(scopeSetSpec, args);
@@ -126,30 +134,43 @@ export async function scopeSet(ctx: Ctx, args: string[]): Promise<unknown> {
   const name = account(ctx);
   const af = acctFlag(ctx, name);
   const chatFlag = chat ? ` --chat ${chat}` : "";
-  const retry = `whatsapp-axi scope set full${chatFlag} --confirm${af}`;
-  if (scope === "full" && !p.flags.confirm) {
-    throw confirmRequired(`setting full needs --confirm: full keeps every message${chat ? " of that chat" : " of every chat"}`, [
-      `Run \`${retry}\` if you mean to widen it`,
-    ]);
-  }
+  const retry = `whatsapp-axi scope set ${scope}${chatFlag} --confirm${af}`;
+  const confirm = p.flags.confirm === true;
   const d = ctx.daemon(name);
   const before = await getSettings(d);
+  const acct = before.settings.scope;
+  // The gate is judged by effect: any chat whose effective scope is wider after the change. The
+  // daemon judges it too, on the canonical chat id, so a chat named another way is still gated.
+  if (!confirm) {
+    let widens: string | undefined;
+    if (chat) {
+      const was = effective(before.settings.chats[chat] ?? "default", acct);
+      const next = effective(scope, acct);
+      if (rank(next) > rank(was)) widens = `the chat then keeps ${next}, where it kept ${was}`;
+    } else if (rank(scope) > rank(acct)) {
+      widens = `every chat without an override then keeps ${scope}, where it kept ${acct}`;
+    }
+    if (widens) {
+      throw confirmRequired(`this change widens what the account keeps and needs --confirm: ${widens}`, [`Run \`${retry}\` if you mean to widen it`]);
+    }
+  }
   if (chat) {
-    const r = await patchSettings(d, { chats: { [chat]: scope === "default" ? null : scope } }, p.flags.confirm === true, retry);
+    const r = await patchSettings(d, { chats: { [chat]: scope === "default" ? null : scope } }, confirm, retry);
     // The daemon stores the chat under its canonical id; find the override that changed.
     const keyOf = (s: Settings) => (chat in s.chats ? chat : (Object.keys(s.chats).find((k) => before.settings.chats[k] !== s.chats[k]) ?? chat));
     const key = keyOf(r.settings);
     const now = r.settings.chats[key] ?? "default";
     const was = before.settings.chats[key] ?? "default";
-    const undo =
-      was === "default"
-        ? `whatsapp-axi scope set default --chat ${key}${af}`
-        : `whatsapp-axi scope set ${was} --chat ${key}${was === "full" ? " --confirm" : ""}${af}`;
+    const nowAcct = r.settings.scope;
+    // Undoing is gated when it widens this chat back.
+    const undoGated = rank(effective(was, nowAcct)) > rank(effective(now, nowAcct));
+    const undo = `whatsapp-axi scope set ${was} --chat ${key}${undoGated ? " --confirm" : ""}${af}`;
     return { chat: key, ...changed("scope", now, was, undo, r.changed === true) };
   }
-  const r = await patchSettings(d, { scope }, p.flags.confirm === true, retry);
+  const r = await patchSettings(d, { scope }, confirm, retry);
   const was = before.settings.scope;
-  return changed("scope", r.settings.scope, was, `whatsapp-axi scope set ${was}${was === "full" ? " --confirm" : ""}${af}`, r.changed === true);
+  const undoGated = rank(was) > rank(r.settings.scope);
+  return changed("scope", r.settings.scope, was, `whatsapp-axi scope set ${was}${undoGated ? " --confirm" : ""}${af}`, r.changed === true);
 }
 
 export const scopeDMFromSpec: CommandSpec = {
