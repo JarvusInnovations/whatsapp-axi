@@ -1,10 +1,10 @@
 name: Publish npm packages
 
-# On the GitHub release that release-publish.yml creates: set the version from the tag, run the CI
-# gate at the tag, then publish the four platform packages and, last, the main package, with npm
-# trusted publishing (OIDC, no token) and provenance. The trusted-publisher setting of each of the
-# five packages names this file, publish-npm.yml: renaming it stops publishing until all five are
-# reconfigured. The first publish of each package is manual (docs/releasing.md).
+# On the GitHub release that release-publish.yml creates: resolve the version from the tag, run the
+# CI workflow (ci.yml) at the tag as the gate, then publish the four platform packages and, last,
+# the main package, with npm trusted publishing (OIDC, no token) and provenance. The
+# trusted-publisher setting of each of the five packages names this file, publish-npm.yml: renaming
+# it stops publishing until all five are reconfigured. The first publish of each package is manual (docs/releasing.md).
 on:
   release:
     types: [published]
@@ -13,12 +13,13 @@ permissions:
   contents: read
 
 jobs:
-  gate:
+  version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
-
       - name: Resolve the release version
+        id: resolve
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
@@ -26,51 +27,15 @@ jobs:
             echo "::error::release tag $GITHUB_REF_NAME is not vX.Y.Z or vX.Y.Z-rc.N"
             exit 1
           fi
-          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .tool-versions
-          package-manager-cache: false
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: .tool-versions
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: .tool-versions
-          cache-dependency-path: daemon/go.sum
-
-      - name: Set package.json version from tag
-        run: npm version --no-git-tag-version --allow-same-version "$RELEASE_VERSION"
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Scrub gate
-        run: bun run check:scrub
-
-      - name: Lint, format, type check, build
-        run: bun run lint && bun run format:check && bun run typecheck && bun run build
-
-      - name: The skill is current with the command reference
-        run: bun run docs:check
-
-      - name: The built CLI reports the release version
-        run: test "$(node dist/bin/whatsapp-axi.js --version)" = "$RELEASE_VERSION"
-
-      - name: Licence gate
-        run: bun run check:licenses
-
-      - name: Daemon tests
-        working-directory: daemon
-        env:
-          CGO_ENABLED: "0"
-        run: go vet ./... && go test ./...
-
-      - name: CLI tests (with the daemon for the end-to-end test)
-        run: bun run build:daemon && bun run test
+  # The gate is the CI workflow itself, at the tag, stamped with the release version: the same
+  # jobs a pull request runs, so a check cannot pass in CI and fail here, or the reverse.
+  gate:
+    needs: version
+    uses: ./.github/workflows/ci.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
 
   publish-npm:
     needs: gate
