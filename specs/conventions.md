@@ -291,6 +291,9 @@ codes above; nothing an agent sees comes from the binary directly.
 - CI runs a smoke test on the built CLI with no account and no daemon, asserting a `code:` and
   no stack trace; a scrub check for real phone numbers and ids; and re-runs on a pull request's
   `edited` event.
+- The publish workflow's gate is the CI workflow itself, run at the release tag. CI builds and
+  tests with a version stamped into `package.json`, the release version at a release and a CI
+  version otherwise, never the placeholder, so no test can pass only while the two agree.
 - Toolchain: the house standard for the family (`bun` for install, scripts and tests, with the
   committed lockfile), while the published package stays an ordinary npm package for Node 22
   or later.
